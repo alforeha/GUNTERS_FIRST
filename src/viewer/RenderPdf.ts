@@ -162,7 +162,7 @@ export class RenderPdf {
       this.clearLoadedTiles();
       this.requestRender();
     }
-    if (scaleChanged || northArrowChanged) {
+    if (scaleChanged || northArrowChanged || cropChanged) {
       // Visibility-only: just toggle group.visible, no geometry rebuild
       const naVisOnly = !scaleChanged
         && this.northArrowGroup !== null
@@ -176,7 +176,7 @@ export class RenderPdf {
         this.buildNorthArrowOverlay();
       }
     }
-    if (scaleChanged || scaleBarChanged) {
+    if (scaleChanged || scaleBarChanged || cropChanged) {
       const sbVisOnly = !scaleChanged
         && this.scaleBarGroup !== null
         && oldScaleBar !== null && sheet.scaleBar !== null
@@ -189,7 +189,7 @@ export class RenderPdf {
         this.buildScaleBarOverlay();
       }
     }
-    if (scaleChanged || knownDistanceChanged) {
+    if (scaleChanged || knownDistanceChanged || cropChanged) {
       const kdVisOnly = !scaleChanged
         && this.knownDistanceGroup !== null
         && oldKnownDistance !== null && sheet.knownDistance !== null
@@ -382,15 +382,30 @@ export class RenderPdf {
     if (!na) return;
 
     const ppf = this.pixelsPerFoot();
-    const fullW = this.sheet.widthPx150 / ppf;
-    const fullH = this.sheet.heightPx150 / ppf;
+    const sheetW = this.sheet.widthPx150;
+    const sheetH = this.sheet.heightPx150;
 
-    // Convert sheet-px origin (top-left) to local 3D coords (center origin, Y-up)
-    const cx = (na.x - this.sheet.widthPx150 / 2) / ppf;
-    const cy = -((na.y - this.sheet.heightPx150 / 2) / ppf);
+    // Crop clip polygon in sheet-px space (top-left origin, Y-down)
+    const cropPoly = this.sheet.borderCrop
+      ? cropClipPolygon(this.sheet.borderCrop, sheetW, sheetH)
+      : null;
+
+    // Sheet-px helper: convert world-unit 3D local coords back to sheet-px.
+    // Local space: cx = (spx - sheetW/2)/ppf, cy = -((spy - sheetH/2)/ppf)
+    // => spx = cx*ppf + sheetW/2, spy = -cy*ppf + sheetH/2
+    // World local from sheet-px
+    const toWorld2 = (spx: number, spy: number): [number, number] => [
+      (spx - sheetW / 2) / ppf,
+      -((spy - sheetH / 2) / ppf),
+    ];
+
+    // All geometry is first computed in world-unit local coords (same as before),
+    // then clipped in sheet-px space, then converted back.
+
+    const cx = (na.x - sheetW / 2) / ppf;
+    const cy = -((na.y - sheetH / 2) / ppf);
     const r = 75 / ppf; // NORTH_ARROW_RADIUS = 75px
 
-    // Parse color hex to THREE.Color
     const color = new THREE.Color(na.color);
 
     const group = new THREE.Group();
@@ -406,76 +421,150 @@ export class RenderPdf {
       toneMapped: false,
     });
 
-    // Circle (32 segments)
-    const circlePoints: THREE.Vector3[] = [];
+    // Circle (32 segments) — clip each chord against cropPoly
     const SEG = 32;
-    for (let i = 0; i <= SEG; i++) {
-      const a = (i / SEG) * Math.PI * 2;
-      circlePoints.push(new THREE.Vector3(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 0));
+    if (cropPoly) {
+      // Build sheet-px arc points, clip each segment, emit surviving Line objects
+      const arcPx: [number, number][] = [];
+      for (let i = 0; i <= SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        // Sheet-px: center + offset. Y-axis: sin positive is downward in sheet-px.
+        arcPx.push([na.x + Math.cos(a) * 75, na.y - Math.sin(a) * 75]);
+      }
+      const segs = clipPolyline(arcPx, cropPoly);
+      for (const [s0, s1] of segs) {
+        const [wx0, wy0] = toWorld2(s0[0], s0[1]);
+        const [wx1, wy1] = toWorld2(s1[0], s1[1]);
+        const geo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(wx0, wy0, 0),
+          new THREE.Vector3(wx1, wy1, 0),
+        ]);
+        const line = new THREE.Line(geo, lineMat);
+        line.renderOrder = 100;
+        group.add(line);
+      }
+    } else {
+      const circlePoints: THREE.Vector3[] = [];
+      for (let i = 0; i <= SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        circlePoints.push(new THREE.Vector3(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 0));
+      }
+      const circleGeo = new THREE.BufferGeometry().setFromPoints(circlePoints);
+      const circle = new THREE.Line(circleGeo, lineMat);
+      circle.renderOrder = 100;
+      group.add(circle);
     }
-    const circleGeo = new THREE.BufferGeometry().setFromPoints(circlePoints);
-    const circle = new THREE.Line(circleGeo, lineMat);
-    circle.renderOrder = 100;
-    group.add(circle);
 
-    // Arrow shaft: center to tip
-    // angleDeg: 0=up (north), CW. In 3D: 0=up=+Y, CW from above = negative rotation around Z.
-    const rad = (-na.angleDeg + 90) * Math.PI / 180; // convert to standard math angle
+    // Arrow shaft: center to tip — in 3D local space
+    const rad = (-na.angleDeg + 90) * Math.PI / 180;
     const tipX = cx + Math.cos(rad) * r;
     const tipY = cy + Math.sin(rad) * r;
-    const shaftGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(cx, cy, 0),
-      new THREE.Vector3(tipX, tipY, 0),
-    ]);
-    const shaft = new THREE.Line(shaftGeo, lineMat);
-    shaft.renderOrder = 100;
-    group.add(shaft);
 
-    // Arrowhead (small filled triangle at tip)
+    if (cropPoly) {
+      // Convert shaft endpoints to sheet-px for clipping
+      const shaftP0: [number, number] = [na.x, na.y];
+      // tip in sheet-px: na.x + cos, na.y - sin (Y-down)
+      const shaftP1: [number, number] = [na.x + Math.cos(rad) * 75, na.y - Math.sin(rad) * 75];
+      const seg = clipSegment(shaftP0, shaftP1, cropPoly);
+      if (seg) {
+        const [wx0, wy0] = toWorld2(seg[0][0], seg[0][1]);
+        const [wx1, wy1] = toWorld2(seg[1][0], seg[1][1]);
+        const shaftGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(wx0, wy0, 0),
+          new THREE.Vector3(wx1, wy1, 0),
+        ]);
+        const shaft = new THREE.Line(shaftGeo, lineMat);
+        shaft.renderOrder = 100;
+        group.add(shaft);
+      }
+    } else {
+      const shaftGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(cx, cy, 0),
+        new THREE.Vector3(tipX, tipY, 0),
+      ]);
+      const shaft = new THREE.Line(shaftGeo, lineMat);
+      shaft.renderOrder = 100;
+      group.add(shaft);
+    }
+
+    // Arrowhead triangle — clip against crop
     const headLen = 8 / ppf;
     const headW = 4 / ppf;
     const ux = Math.cos(rad);
     const uy = Math.sin(rad);
-    const px = -uy; // perpendicular
-    const py = ux;
-    const headGeo = new THREE.BufferGeometry();
-    const headVerts = new Float32Array([
-      tipX, tipY, 0,
-      tipX - ux * headLen - px * headW, tipY - uy * headLen - py * headW, 0,
-      tipX - ux * headLen + px * headW, tipY - uy * headLen + py * headW, 0,
-    ]);
-    headGeo.setAttribute('position', new THREE.BufferAttribute(headVerts, 3));
+    const perpX = -uy;
+    const perpY = ux;
     const headMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
-    const head = new THREE.Mesh(headGeo, headMat);
-    head.renderOrder = 100;
-    group.add(head);
 
-    // N label as a small sprite-like plane with canvas texture
-    const labelSize = 20 / ppf;
-    const texSize = 64;
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = texSize;
-    labelCanvas.height = texSize;
-    const lctx = labelCanvas.getContext('2d');
-    if (lctx) {
-      lctx.fillStyle = 'rgba(17,20,23,0.75)';
-      lctx.fillRect(0, 0, texSize, texSize);
-      lctx.fillStyle = na.color;
-      lctx.font = `bold ${Math.floor(texSize * 0.65)}px sans-serif`;
-      lctx.textAlign = 'center';
-      lctx.textBaseline = 'middle';
-      lctx.fillText('N', texSize / 2, texSize / 2);
+    if (cropPoly) {
+      // Sheet-px tip and base points (headLen/headW are in world units; convert back)
+      const tipPx: [number, number] = [na.x + Math.cos(rad) * 75, na.y - Math.sin(rad) * 75];
+      const headLenPx = headLen * ppf;
+      const headWPx = headW * ppf;
+      // In sheet-px: ux/uy are world-unit vectors; Y is inverted -> py is -ux in world = ux in sheet-px
+      const triPx: [number, number][] = [
+        tipPx,
+        [tipPx[0] - ux * headLenPx - perpX * headWPx, tipPx[1] + uy * headLenPx + perpY * headWPx],
+        [tipPx[0] - ux * headLenPx + perpX * headWPx, tipPx[1] + uy * headLenPx - perpY * headWPx],
+      ];
+      const clipped = sutherlandHodgman(triPx, cropPoly);
+      if (clipped.length >= 3) {
+        const worldPts = clipped.map(([spx, spy]) => {
+          const [wx, wy] = toWorld2(spx, spy);
+          return new THREE.Vector3(wx, wy, 0);
+        });
+        // Triangulate as fan from first vertex
+        const verts: number[] = [];
+        for (let i = 1; i + 1 < worldPts.length; i++) {
+          verts.push(worldPts[0]!.x, worldPts[0]!.y, 0);
+          verts.push(worldPts[i]!.x, worldPts[i]!.y, 0);
+          verts.push(worldPts[i + 1]!.x, worldPts[i + 1]!.y, 0);
+        }
+        const headGeo = new THREE.BufferGeometry();
+        headGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.renderOrder = 100;
+        group.add(head);
+      }
+    } else {
+      const headGeo = new THREE.BufferGeometry();
+      const headVerts = new Float32Array([
+        tipX, tipY, 0,
+        tipX - ux * headLen - perpX * headW, tipY - uy * headLen - perpY * headW, 0,
+        tipX - ux * headLen + perpX * headW, tipY - uy * headLen + perpY * headW, 0,
+      ]);
+      headGeo.setAttribute('position', new THREE.BufferAttribute(headVerts, 3));
+      const head = new THREE.Mesh(headGeo, headMat);
+      head.renderOrder = 100;
+      group.add(head);
     }
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelGeo = new THREE.PlaneGeometry(labelSize, labelSize);
-    labelGeo.translate(cx, cy, 0);
-    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
-    const label = new THREE.Mesh(labelGeo, labelMat);
-    label.renderOrder = 101;
-    group.add(label);
 
-    // Suppress unused variable warnings — fullW/fullH used only as sanity reference
-    void fullW; void fullH;
+    // N label — show only if center is inside crop
+    const centerInCrop = !cropPoly || pointInPolygon2D([na.x, na.y], cropPoly);
+    if (centerInCrop) {
+      const labelSize = 20 / ppf;
+      const texSize = 64;
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = texSize;
+      labelCanvas.height = texSize;
+      const lctx = labelCanvas.getContext('2d');
+      if (lctx) {
+        lctx.fillStyle = 'rgba(17,20,23,0.75)';
+        lctx.fillRect(0, 0, texSize, texSize);
+        lctx.fillStyle = na.color;
+        lctx.font = `bold ${Math.floor(texSize * 0.65)}px sans-serif`;
+        lctx.textAlign = 'center';
+        lctx.textBaseline = 'middle';
+        lctx.fillText('N', texSize / 2, texSize / 2);
+      }
+      const labelTex = new THREE.CanvasTexture(labelCanvas);
+      const labelGeo = new THREE.PlaneGeometry(labelSize, labelSize);
+      labelGeo.translate(cx, cy, 0);
+      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
+      const label = new THREE.Mesh(labelGeo, labelMat);
+      label.renderOrder = 101;
+      group.add(label);
+    }
 
     this.group.add(group);
     this.northArrowGroup = group;
@@ -508,68 +597,128 @@ export class RenderPdf {
     const sb = this.sheet.scaleBar;
     if (!sb || !sb.visible || sb.realWorldFt === null) return;
     const ppf = this.pixelsPerFoot();
-    const cx = (sb.x - this.sheet.widthPx150 / 2) / ppf;
-    const cy = -((sb.y - this.sheet.heightPx150 / 2) / ppf);
+    const sheetW = this.sheet.widthPx150;
+    const sheetH = this.sheet.heightPx150;
+
+    const cropPoly = this.sheet.borderCrop
+      ? cropClipPolygon(this.sheet.borderCrop, sheetW, sheetH)
+      : null;
+
+    const toWorld2 = (spx: number, spy: number): [number, number] => [
+      (spx - sheetW / 2) / ppf,
+      -((spy - sheetH / 2) / ppf),
+    ];
+
+    const cx = (sb.x - sheetW / 2) / ppf;
+    const cy = -((sb.y - sheetH / 2) / ppf);
     const halfW = (150 / 2) / ppf; // SCALE_BAR_LEN_PX / 2
     const headLen = 8 / ppf;
     const headW = 4 / ppf;
     const color = new THREE.Color(sb.color);
     const lineMat = new THREE.LineBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false });
+    const meshMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
     const group = new THREE.Group();
     group.name = `pdf-scale-bar:${this.handle}`;
     group.renderOrder = 100;
+
+    // Sheet-px coords for the bar endpoints (Y same — horizontal line)
+    const halfWPx = 75; // 150/2
+    const sbP0Px: [number, number] = [sb.x - halfWPx, sb.y];
+    const sbP1Px: [number, number] = [sb.x + halfWPx, sb.y];
+    const headLenPx = headLen * ppf;
+    const headWPx = headW * ppf;
+
     // main line
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(cx - halfW, cy, 0),
-      new THREE.Vector3(cx + halfW, cy, 0),
-    ]);
-    const line = new THREE.Line(lineGeo, lineMat);
-    line.renderOrder = 100;
-    group.add(line);
-    // left arrowhead
-    const lhGeo = new THREE.BufferGeometry();
-    lhGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-      cx - halfW, cy, 0,
-      cx - halfW + headLen, cy - headW, 0,
-      cx - halfW + headLen, cy + headW, 0,
-    ]), 3));
-    const meshMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
-    const lh = new THREE.Mesh(lhGeo, meshMat);
-    lh.renderOrder = 100;
-    group.add(lh);
-    // right arrowhead
-    const rhGeo = new THREE.BufferGeometry();
-    rhGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-      cx + halfW, cy, 0,
-      cx + halfW - headLen, cy - headW, 0,
-      cx + halfW - headLen, cy + headW, 0,
-    ]), 3));
-    const rh = new THREE.Mesh(rhGeo, meshMat.clone());
-    rh.renderOrder = 100;
-    group.add(rh);
-    // label
-    const texSize = 128;
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = texSize * 2; labelCanvas.height = texSize;
-    const lctx = labelCanvas.getContext('2d');
-    if (lctx) {
-      lctx.fillStyle = 'rgba(17,20,23,0.75)';
-      lctx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
-      lctx.fillStyle = sb.color;
-      lctx.font = `bold ${Math.floor(texSize * 0.5)}px sans-serif`;
-      lctx.textAlign = 'center';
-      lctx.textBaseline = 'middle';
-      lctx.fillText(`1"=${sb.realWorldFt}ft`, labelCanvas.width / 2, labelCanvas.height / 2);
+    if (cropPoly) {
+      const seg = clipSegment(sbP0Px, sbP1Px, cropPoly);
+      if (seg) {
+        const [wx0, wy0] = toWorld2(seg[0][0], seg[0][1]);
+        const [wx1, wy1] = toWorld2(seg[1][0], seg[1][1]);
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(wx0, wy0, 0),
+          new THREE.Vector3(wx1, wy1, 0),
+        ]);
+        const line = new THREE.Line(lineGeo, lineMat);
+        line.renderOrder = 100;
+        group.add(line);
+      }
+    } else {
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(cx - halfW, cy, 0),
+        new THREE.Vector3(cx + halfW, cy, 0),
+      ]);
+      const line = new THREE.Line(lineGeo, lineMat);
+      line.renderOrder = 100;
+      group.add(line);
     }
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelW = (halfW * 2) * 1.1;
-    const labelH = labelW * 0.25;
-    const labelGeo = new THREE.PlaneGeometry(labelW, labelH);
-    labelGeo.translate(cx, cy - halfW * 0.4, 0);
-    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
-    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
-    labelMesh.renderOrder = 101;
-    group.add(labelMesh);
+
+    // left arrowhead — triangle pointing left at sbP0Px
+    const lhTriPx: [number, number][] = [
+      sbP0Px,
+      [sbP0Px[0] + headLenPx, sbP0Px[1] - headWPx],
+      [sbP0Px[0] + headLenPx, sbP0Px[1] + headWPx],
+    ];
+    const lhClipped = cropPoly ? sutherlandHodgman(lhTriPx, cropPoly) : lhTriPx;
+    if (lhClipped.length >= 3) {
+      const worldPts = lhClipped.map(([spx, spy]) => { const [wx, wy] = toWorld2(spx, spy); return new THREE.Vector3(wx, wy, 0); });
+      const verts: number[] = [];
+      for (let i = 1; i + 1 < worldPts.length; i++) {
+        verts.push(worldPts[0]!.x, worldPts[0]!.y, 0, worldPts[i]!.x, worldPts[i]!.y, 0, worldPts[i + 1]!.x, worldPts[i + 1]!.y, 0);
+      }
+      const lhGeo = new THREE.BufferGeometry();
+      lhGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      const lh = new THREE.Mesh(lhGeo, meshMat);
+      lh.renderOrder = 100;
+      group.add(lh);
+    }
+
+    // right arrowhead — triangle pointing right at sbP1Px
+    const rhTriPx: [number, number][] = [
+      sbP1Px,
+      [sbP1Px[0] - headLenPx, sbP1Px[1] - headWPx],
+      [sbP1Px[0] - headLenPx, sbP1Px[1] + headWPx],
+    ];
+    const rhClipped = cropPoly ? sutherlandHodgman(rhTriPx, cropPoly) : rhTriPx;
+    if (rhClipped.length >= 3) {
+      const worldPts = rhClipped.map(([spx, spy]) => { const [wx, wy] = toWorld2(spx, spy); return new THREE.Vector3(wx, wy, 0); });
+      const verts: number[] = [];
+      for (let i = 1; i + 1 < worldPts.length; i++) {
+        verts.push(worldPts[0]!.x, worldPts[0]!.y, 0, worldPts[i]!.x, worldPts[i]!.y, 0, worldPts[i + 1]!.x, worldPts[i + 1]!.y, 0);
+      }
+      const rhGeo = new THREE.BufferGeometry();
+      rhGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      const rh = new THREE.Mesh(rhGeo, meshMat.clone());
+      rh.renderOrder = 100;
+      group.add(rh);
+    }
+
+    // label — show only if bar center is inside crop
+    const centerInCrop = !cropPoly || pointInPolygon2D([sb.x, sb.y], cropPoly);
+    if (centerInCrop) {
+      const texSize = 128;
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = texSize * 2; labelCanvas.height = texSize;
+      const lctx = labelCanvas.getContext('2d');
+      if (lctx) {
+        lctx.fillStyle = 'rgba(17,20,23,0.75)';
+        lctx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+        lctx.fillStyle = sb.color;
+        lctx.font = `bold ${Math.floor(texSize * 0.5)}px sans-serif`;
+        lctx.textAlign = 'center';
+        lctx.textBaseline = 'middle';
+        lctx.fillText(`1"=${sb.realWorldFt}ft`, labelCanvas.width / 2, labelCanvas.height / 2);
+      }
+      const labelTex = new THREE.CanvasTexture(labelCanvas);
+      const labelW = (halfW * 2) * 1.1;
+      const labelH = labelW * 0.25;
+      const labelGeo = new THREE.PlaneGeometry(labelW, labelH);
+      labelGeo.translate(cx, cy - halfW * 0.4, 0);
+      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
+      const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+      labelMesh.renderOrder = 101;
+      group.add(labelMesh);
+    }
+
     this.group.add(group);
     this.scaleBarGroup = group;
     this.requestRender();
@@ -594,77 +743,139 @@ export class RenderPdf {
     const kd = this.sheet.knownDistance;
     if (!kd || !kd.visible || kd.realWorldFt === null) return;
     const ppf = this.pixelsPerFoot();
-    const toWorld = (p: { x: number; y: number }): THREE.Vector3 => new THREE.Vector3(
-      (p.x - this.sheet.widthPx150 / 2) / ppf,
-      -((p.y - this.sheet.heightPx150 / 2) / ppf),
-      0,
-    );
-    const bv = toWorld(kd.begin);
-    const ev = toWorld(kd.end);
+    const sheetW = this.sheet.widthPx150;
+    const sheetH = this.sheet.heightPx150;
+
+    const cropPoly = this.sheet.borderCrop
+      ? cropClipPolygon(this.sheet.borderCrop, sheetW, sheetH)
+      : null;
+
+    const toWorld2 = (spx: number, spy: number): [number, number] => [
+      (spx - sheetW / 2) / ppf,
+      -((spy - sheetH / 2) / ppf),
+    ];
+    const toWorldVec = (spx: number, spy: number): THREE.Vector3 => {
+      const [wx, wy] = toWorld2(spx, spy);
+      return new THREE.Vector3(wx, wy, 0);
+    };
+
+    // World-unit endpoints (for non-clipped path and label geometry)
+    const bv = toWorldVec(kd.begin.x, kd.begin.y);
+    const ev = toWorldVec(kd.end.x, kd.end.y);
     const dir = new THREE.Vector3().subVectors(ev, bv);
     const len = dir.length();
     if (len < 0.001) return;
-    const ux = dir.x / len;
-    const uy = dir.y / len;
     const headLen = 8 / ppf;
     const headW = 4 / ppf;
+    const headLenPx = headLen * ppf;
+    const headWPx = headW * ppf;
+
+    // Sheet-px direction unit vector (Y-down: uy_px = -uy_world)
+    const dxPx = kd.end.x - kd.begin.x;
+    const dyPx = kd.end.y - kd.begin.y;
+    const lenPx = Math.hypot(dxPx, dyPx);
+    const uxPx = dxPx / (lenPx || 1);
+    const uyPx = dyPx / (lenPx || 1);
+
     const color = new THREE.Color(kd.color);
     const lineMat = new THREE.LineBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false });
+    const meshMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
     const group = new THREE.Group();
     group.name = `pdf-known-distance:${this.handle}`;
     group.renderOrder = 100;
+
     // main line
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([bv, ev]);
-    const line = new THREE.Line(lineGeo, lineMat);
-    line.renderOrder = 100;
-    group.add(line);
-    const meshMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
-    // begin arrowhead
-    const bhGeo = new THREE.BufferGeometry();
-    bhGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-      bv.x, bv.y, 0,
-      bv.x + ux * headLen - uy * headW, bv.y + uy * headLen + ux * headW, 0,
-      bv.x + ux * headLen + uy * headW, bv.y + uy * headLen - ux * headW, 0,
-    ]), 3));
-    const bh = new THREE.Mesh(bhGeo, meshMat);
-    bh.renderOrder = 100;
-    group.add(bh);
-    // end arrowhead
-    const ehGeo = new THREE.BufferGeometry();
-    ehGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-      ev.x, ev.y, 0,
-      ev.x - ux * headLen - uy * headW, ev.y - uy * headLen + ux * headW, 0,
-      ev.x - ux * headLen + uy * headW, ev.y - uy * headLen - ux * headW, 0,
-    ]), 3));
-    const eh = new THREE.Mesh(ehGeo, meshMat.clone());
-    eh.renderOrder = 100;
-    group.add(eh);
-    // label at midpoint
-    const mx = (bv.x + ev.x) / 2;
-    const my = (bv.y + ev.y) / 2;
-    const measuredIn = (len * ppf) / 150;
-    const texSize = 128;
-    const labelCanvas = document.createElement('canvas');
-    labelCanvas.width = texSize * 2; labelCanvas.height = texSize;
-    const lctx = labelCanvas.getContext('2d');
-    if (lctx) {
-      lctx.fillStyle = 'rgba(17,20,23,0.75)';
-      lctx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
-      lctx.fillStyle = kd.color;
-      lctx.font = `bold ${Math.floor(texSize * 0.45)}px sans-serif`;
-      lctx.textAlign = 'center';
-      lctx.textBaseline = 'middle';
-      lctx.fillText(`${measuredIn.toFixed(2)}"=${kd.realWorldFt}ft`, labelCanvas.width / 2, labelCanvas.height / 2);
+    const lineP0Px: [number, number] = [kd.begin.x, kd.begin.y];
+    const lineP1Px: [number, number] = [kd.end.x, kd.end.y];
+    if (cropPoly) {
+      const seg = clipSegment(lineP0Px, lineP1Px, cropPoly);
+      if (seg) {
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+          toWorldVec(seg[0][0], seg[0][1]),
+          toWorldVec(seg[1][0], seg[1][1]),
+        ]);
+        const line = new THREE.Line(lineGeo, lineMat);
+        line.renderOrder = 100;
+        group.add(line);
+      }
+    } else {
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([bv, ev]);
+      const line = new THREE.Line(lineGeo, lineMat);
+      line.renderOrder = 100;
+      group.add(line);
     }
-    const labelTex = new THREE.CanvasTexture(labelCanvas);
-    const labelW = len * 1.1;
-    const labelH = labelW * 0.2;
-    const labelGeo = new THREE.PlaneGeometry(labelW, labelH);
-    labelGeo.translate(mx, my + labelH, 0);
-    const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
-    const labelMesh = new THREE.Mesh(labelGeo, labelMat);
-    labelMesh.renderOrder = 101;
-    group.add(labelMesh);
+
+    // begin arrowhead — in sheet-px space
+    const bhTriPx: [number, number][] = [
+      [kd.begin.x, kd.begin.y],
+      [kd.begin.x + uxPx * headLenPx - uyPx * headWPx, kd.begin.y + uyPx * headLenPx + uxPx * headWPx],
+      [kd.begin.x + uxPx * headLenPx + uyPx * headWPx, kd.begin.y + uyPx * headLenPx - uxPx * headWPx],
+    ];
+    const bhClipped = cropPoly ? sutherlandHodgman(bhTriPx, cropPoly) : bhTriPx;
+    if (bhClipped.length >= 3) {
+      const worldPts = bhClipped.map(([spx, spy]) => toWorldVec(spx, spy));
+      const verts: number[] = [];
+      for (let i = 1; i + 1 < worldPts.length; i++) {
+        verts.push(worldPts[0]!.x, worldPts[0]!.y, 0, worldPts[i]!.x, worldPts[i]!.y, 0, worldPts[i + 1]!.x, worldPts[i + 1]!.y, 0);
+      }
+      const bhGeo = new THREE.BufferGeometry();
+      bhGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      const bh = new THREE.Mesh(bhGeo, meshMat);
+      bh.renderOrder = 100;
+      group.add(bh);
+    }
+
+    // end arrowhead — in sheet-px space
+    const ehTriPx: [number, number][] = [
+      [kd.end.x, kd.end.y],
+      [kd.end.x - uxPx * headLenPx - uyPx * headWPx, kd.end.y - uyPx * headLenPx + uxPx * headWPx],
+      [kd.end.x - uxPx * headLenPx + uyPx * headWPx, kd.end.y - uyPx * headLenPx - uxPx * headWPx],
+    ];
+    const ehClipped = cropPoly ? sutherlandHodgman(ehTriPx, cropPoly) : ehTriPx;
+    if (ehClipped.length >= 3) {
+      const worldPts = ehClipped.map(([spx, spy]) => toWorldVec(spx, spy));
+      const verts: number[] = [];
+      for (let i = 1; i + 1 < worldPts.length; i++) {
+        verts.push(worldPts[0]!.x, worldPts[0]!.y, 0, worldPts[i]!.x, worldPts[i]!.y, 0, worldPts[i + 1]!.x, worldPts[i + 1]!.y, 0);
+      }
+      const ehGeo = new THREE.BufferGeometry();
+      ehGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      const eh = new THREE.Mesh(ehGeo, meshMat.clone());
+      eh.renderOrder = 100;
+      group.add(eh);
+    }
+
+    // label at midpoint — show only if midpoint is inside crop
+    const midPx: [number, number] = [(kd.begin.x + kd.end.x) / 2, (kd.begin.y + kd.end.y) / 2];
+    const midInCrop = !cropPoly || pointInPolygon2D(midPx, cropPoly);
+    if (midInCrop) {
+      const mx = (bv.x + ev.x) / 2;
+      const my = (bv.y + ev.y) / 2;
+      const measuredIn = (len * ppf) / 150;
+      const texSize = 128;
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = texSize * 2; labelCanvas.height = texSize;
+      const lctx = labelCanvas.getContext('2d');
+      if (lctx) {
+        lctx.fillStyle = 'rgba(17,20,23,0.75)';
+        lctx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+        lctx.fillStyle = kd.color;
+        lctx.font = `bold ${Math.floor(texSize * 0.45)}px sans-serif`;
+        lctx.textAlign = 'center';
+        lctx.textBaseline = 'middle';
+        lctx.fillText(`${measuredIn.toFixed(2)}"=${kd.realWorldFt}ft`, labelCanvas.width / 2, labelCanvas.height / 2);
+      }
+      const labelTex = new THREE.CanvasTexture(labelCanvas);
+      const labelW = len * 1.1;
+      const labelH = labelW * 0.2;
+      const labelGeo = new THREE.PlaneGeometry(labelW, labelH);
+      labelGeo.translate(mx, my + labelH, 0);
+      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
+      const labelMesh = new THREE.Mesh(labelGeo, labelMat);
+      labelMesh.renderOrder = 101;
+      group.add(labelMesh);
+    }
+
     this.group.add(group);
     this.knownDistanceGroup = group;
     this.requestRender();
@@ -997,4 +1208,139 @@ function maskTileRgba(
       rgba[i + 3] = 0;
     }
   }
+}
+
+// ── Overlay geometry clipping helpers ────────────────────────────────────────
+// All coordinates below are in sheet-pixel space (150 dpi, top-left origin,
+// matching the BorderCrop coordinate system).
+
+/** Return the clip polygon for a BorderCrop as a flat [x,y][] list. */
+function cropClipPolygon(
+  crop: BorderCrop,
+  sheetW: number,
+  sheetH: number,
+): [number, number][] {
+  if (crop.kind === 'rect') {
+    const { x, y, width, height } = crop;
+    return [[x, y], [x + width, y], [x + width, y + height], [x, y + height]];
+  }
+  // polygon — ensure we have at least 3 points
+  return crop.points.length >= 3 ? crop.points : [
+    [0, 0], [sheetW, 0], [sheetW, sheetH], [0, sheetH],
+  ];
+}
+
+/**
+ * Sutherland-Hodgman polygon clipping.
+ * Clips `subject` (array of [x,y]) against the convex `clip` polygon.
+ * Returns the surviving polygon vertices (may be empty).
+ */
+function sutherlandHodgman(
+  subject: [number, number][],
+  clip: [number, number][],
+): [number, number][] {
+  if (subject.length === 0 || clip.length < 3) return subject;
+
+  const intersectEdge = (
+    a: [number, number],
+    b: [number, number],
+    c: [number, number],
+    d: [number, number],
+  ): [number, number] => {
+    const a1 = b[1] - a[1];
+    const b1 = a[0] - b[0];
+    const c1 = a1 * a[0] + b1 * a[1];
+    const a2 = d[1] - c[1];
+    const b2 = c[0] - d[0];
+    const c2 = a2 * c[0] + b2 * c[1];
+    const det = a1 * b2 - a2 * b1;
+    if (Math.abs(det) < 1e-12) return a; // parallel — return a as fallback
+    return [(b2 * c1 - b1 * c2) / det, (a1 * c2 - a2 * c1) / det];
+  };
+
+  const inside = (
+    p: [number, number],
+    a: [number, number],
+    b: [number, number],
+  ): boolean => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0;
+
+  let output = subject.slice();
+  for (let i = 0; i < clip.length; i++) {
+    if (output.length === 0) break;
+    const edgeA = clip[i]!;
+    const edgeB = clip[(i + 1) % clip.length]!;
+    const input = output;
+    output = [];
+    for (let j = 0; j < input.length; j++) {
+      const curr = input[j]!;
+      const prev = input[(j + input.length - 1) % input.length]!;
+      if (inside(curr, edgeA, edgeB)) {
+        if (!inside(prev, edgeA, edgeB)) {
+          output.push(intersectEdge(prev, curr, edgeA, edgeB));
+        }
+        output.push(curr);
+      } else if (inside(prev, edgeA, edgeB)) {
+        output.push(intersectEdge(prev, curr, edgeA, edgeB));
+      }
+    }
+  }
+  return output;
+}
+
+/**
+ * Clip a line segment [p0,p1] against each half-plane of the clip polygon
+ * using the parametric Cyrus-Beck / Liang-Barsky approach applied per edge.
+ * Returns [clippedP0, clippedP1] or null if entirely outside.
+ */
+function clipSegment(
+  p0: [number, number],
+  p1: [number, number],
+  clip: [number, number][],
+): [[number, number], [number, number]] | null {
+  let tMin = 0;
+  let tMax = 1;
+  const dx = p1[0] - p0[0];
+  const dy = p1[1] - p0[1];
+  for (let i = 0; i < clip.length; i++) {
+    const a = clip[i]!;
+    const b = clip[(i + 1) % clip.length]!;
+    // inward normal of edge a->b (for CCW polygon: left-hand side is inside)
+    const nx = -(b[1] - a[1]);
+    const ny = b[0] - a[0];
+    const denom = nx * dx + ny * dy;
+    const num = nx * (p0[0] - a[0]) + ny * (p0[1] - a[1]);
+    if (Math.abs(denom) < 1e-12) {
+      // parallel — outside if num < 0
+      if (num < 0) return null;
+    } else {
+      const t = -num / denom;
+      if (denom < 0) {
+        if (t > tMin) tMin = t;
+      } else {
+        if (t < tMax) tMax = t;
+      }
+    }
+  }
+  if (tMin > tMax + 1e-9) return null;
+  return [
+    [p0[0] + tMin * dx, p0[1] + tMin * dy],
+    [p0[0] + tMax * dx, p0[1] + tMax * dy],
+  ];
+}
+
+/**
+ * Clip an open polyline (array of [x,y]) against a crop polygon.
+ * Returns an array of sub-segments that survive (each a pair of points).
+ * Adjacent surviving segments are returned as separate pairs (not rejoined).
+ */
+function clipPolyline(
+  pts: [number, number][],
+  clip: [number, number][],
+): [[number, number], [number, number]][] {
+  const result: [[number, number], [number, number]][] = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const seg = clipSegment(pts[i]!, pts[i + 1]!, clip);
+    if (seg) result.push(seg);
+  }
+  return result;
 }
