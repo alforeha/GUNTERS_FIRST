@@ -263,7 +263,31 @@ export class RenderPdf {
     return false;
   }
 
-  private pixelsPerFoot(): number {
+  previewOrientation(
+    orientationDeg: number,
+    pivotScenePx?: { x: number; y: number },
+    baselineOrientDeg?: number,
+    baseCenterScenePx?: { x: number; y: number },
+  ): void {
+    const rad = THREE.MathUtils.degToRad(orientationDeg);
+    if (pivotScenePx !== undefined && baselineOrientDeg !== undefined) {
+      const ppf = this.pixelsPerFoot();
+      const pivotWx = pivotScenePx.x / ppf;
+      const pivotWy = pivotScenePx.y / ppf;
+      const baseWx = baseCenterScenePx !== undefined ? baseCenterScenePx.x / ppf : this.sheet.flatOffsetPx.x / ppf;
+      const baseWy = baseCenterScenePx !== undefined ? baseCenterScenePx.y / ppf : this.sheet.flatOffsetPx.y / ppf;
+      const deltaRad = THREE.MathUtils.degToRad(baselineOrientDeg) - rad;
+      const dx = pivotWx - baseWx;
+      const dy = pivotWy - baseWy;
+      const cosD = Math.cos(deltaRad);
+      const sinD = Math.sin(deltaRad);
+      this.group.position.x = pivotWx - (cosD * dx - sinD * dy);
+      this.group.position.y = pivotWy - (sinD * dx + cosD * dy);
+    }
+    this.group.rotation.z = -rad;
+  }
+
+  pixelsPerFoot(): number {
     return pixelsPerFootForSheet(this.sheet);
   }
 
@@ -279,7 +303,7 @@ export class RenderPdf {
     const rotation = THREE.MathUtils.degToRad(this.sheet.orientation ?? 0);
     const ppf = this.pixelsPerFoot();
     this.group.position.set(this.sheet.flatOffsetPx.x / ppf, this.sheet.flatOffsetPx.y / ppf, -this.origin[2]);
-    this.group.rotation.set(0, 0, rotation);
+    this.group.rotation.set(0, 0, -rotation);
     this.group.visible = this.visibleAll;
   }
 

@@ -14,6 +14,7 @@ import {
   setKnownDistance,
   setWhiteThreshold,
 } from './importController';
+import { engineHolder } from './engineHolder';
 import styles from './App.module.css';
 
 const TILE_SIZE_PX = 1024;
@@ -735,12 +736,36 @@ export function PdfScene() {
   return <SingleSheetScene sheet={directSheet} kind={activeKind === 'orient' ? 'orient' : 'calibrate'} />;
 }
 
+function ptSegDist(p: {x:number,y:number}, a: {x:number,y:number}, b: {x:number,y:number}): number {
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const lenSq=dx*dx+dy*dy;
+  if(lenSq===0) return Math.hypot(p.x-a.x, p.y-a.y);
+  const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/lenSq));
+  return Math.hypot(p.x-(a.x+t*dx), p.y-(a.y+t*dy));
+}
+
 function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry[] }) {
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const [zoom, setZoom] = useState(0.18);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
   const [cropMode, setCropMode] = useState(false);
+  const [rotateMode, setRotateMode] = useState<'idle'|'pivot'|'direction'|'placed'>('idle');
+  const [liveOrientDeg, setLiveOrientDeg] = useState<number|null>(null);
+  const [ghostDirScreen, setGhostDirScreen] = useState<{x:number,y:number}|null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement|null>(null);
+  const rotateDragRef = useRef<{
+    baselineOrientation: number;
+    handle: string;
+    pivotOffsetX: number;
+    pivotOffsetY: number;
+    baseDirOffsetX: number;
+    baseDirOffsetY: number;
+  } | null>(null);
+  const lastPreviewedOrientRef = useRef<number|null>(null);
+  const originalOrientRef = useRef<number|null>(null);
+  const pivotOffsetRef = useRef<{x:number,y:number}|null>(null);
+  const dirOffsetRef = useRef<{x:number,y:number}|null>(null);
   const dragRef = useRef<
     | { kind: 'sheet'; pointerX: number; pointerY: number; offset: Point2; handle: string }
     | { kind: 'crop-corner'; handle: string; cornerIndex: number }
@@ -763,6 +788,12 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
 
   useEffect(() => {
     setCropMode(false);
+    setRotateMode('idle');
+    setGhostDirScreen(null);
+    rotateDragRef.current = null;
+    lastPreviewedOrientRef.current = null;
+    pivotOffsetRef.current = null;
+    dirOffsetRef.current = null;
   }, [selectedHandle]);
 
   useEffect(() => {
@@ -772,6 +803,65 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     setPan({ x: rect.width / 2, y: rect.height / 2 });
   }, []);
 
+  // Draw rotate-mode overlay on the overlay canvas (sheet-local px)
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const parent = canvas.parentElement;
+    if (!parent) return;
+    canvas.width = parent.clientWidth;
+    canvas.height = parent.clientHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (rotateMode === 'idle' || !pivotOffsetRef.current) return;
+    const px = pivotOffsetRef.current.x;
+    const py = pivotOffsetRef.current.y;
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff6600';
+    ctx.fill();
+    if (!dirOffsetRef.current) {
+      if (ghostDirScreen && sceneRef.current && selected) {
+        const rect = sceneRef.current.getBoundingClientRect();
+        const p = panRef.current;
+        const z = zoomRef.current;
+        const sx = (ghostDirScreen.x - rect.left - p.x) / z;
+        const sy = -(ghostDirScreen.y - rect.top - p.y) / z;
+        const gp = sceneToSheetPoint(selected, { x: sx, y: sy });
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(gp.x, gp.y);
+        ctx.strokeStyle = 'rgba(255, 102, 0, 0.45)';
+        ctx.lineWidth = 2 / z;
+        ctx.setLineDash([6, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      return;
+    }
+    const dx2 = dirOffsetRef.current.x;
+    const dy2 = dirOffsetRef.current.y;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(dx2, dy2);
+    ctx.strokeStyle = '#ff6600';
+    ctx.lineWidth = 2 / zoom;
+    ctx.setLineDash([6, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(dx2, dy2, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff6600';
+    ctx.fill();
+    return () => {
+      const c = overlayCanvasRef.current;
+      if (!c) return;
+      const cx = c.getContext('2d');
+      if (cx) cx.clearRect(0, 0, c.width, c.height);
+    };
+  }, [rotateMode, ghostDirScreen, zoom, liveOrientDeg]);
+
   const screenToScene = (clientX: number, clientY: number): Point2 => {
     const rect = sceneRef.current?.getBoundingClientRect();
     const x = clientX - (rect?.left ?? 0);
@@ -780,33 +870,52 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
   };
 
   const sceneToSheetPoint = (sheet: PdfSheetEntry, scenePoint: Point2): Point2 => {
-    const angle = -((sheet.orientation ?? 0) * Math.PI / 180);
+    const a = (sheet.orientation ?? 0) * Math.PI / 180;
     const dx = scenePoint.x - sheet.flatOffsetPx.x;
     const dy = scenePoint.y - sheet.flatOffsetPx.y;
-    const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
-    const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
     return {
-      x: localX + sheet.widthPx150 / 2,
-      y: sheet.heightPx150 / 2 - localY,
+      x: dx * Math.cos(a) - dy * Math.sin(a) + sheet.widthPx150 / 2,
+      y: -dx * Math.sin(a) - dy * Math.cos(a) + sheet.heightPx150 / 2,
     };
   };
 
   const clientToSheetPoint = (sheet: PdfSheetEntry, clientX: number, clientY: number): Point2 =>
     sceneToSheetPoint(sheet, screenToScene(clientX, clientY));
 
+  const sheetPointToScene = (sheet: PdfSheetEntry, sp: Point2): Point2 => {
+    const a = (sheet.orientation ?? 0) * Math.PI / 180;
+    const A = sp.x - sheet.widthPx150 / 2;
+    const B = sp.y - sheet.heightPx150 / 2;
+    return {
+      x: A * Math.cos(a) - B * Math.sin(a) + sheet.flatOffsetPx.x,
+      y: -A * Math.sin(a) - B * Math.cos(a) + sheet.flatOffsetPx.y,
+    };
+  };
+
+  const sheetPointToScreen = (sheet: PdfSheetEntry, sp: Point2): Point2 => {
+    const scene = sheetPointToScene(sheet, sp);
+    const rect = sceneRef.current?.getBoundingClientRect();
+    const p = panRef.current;
+    const z = zoomRef.current;
+    return {
+      x: (rect?.left ?? 0) + p.x + scene.x * z,
+      y: (rect?.top ?? 0) + p.y - scene.y * z,
+    };
+  };
+
   const hitSheet = (clientX: number, clientY: number): PdfSheetEntry | null => {
     const p = screenToScene(clientX, clientY);
     for (let i = sheets.length - 1; i >= 0; i--) {
       const sheet = sheets[i]!;
-      const angle = -((sheet.orientation ?? 0) * Math.PI / 180);
+      const a = (sheet.orientation ?? 0) * Math.PI / 180;
       const dx = p.x - sheet.flatOffsetPx.x;
       const dy = p.y - sheet.flatOffsetPx.y;
-      const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
-      const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
+      const localX = dx * Math.cos(a) - dy * Math.sin(a);
+      const localY = -dx * Math.sin(a) - dy * Math.cos(a);
       if (Math.abs(localX) <= sheet.widthPx150 / 2 && Math.abs(localY) <= sheet.heightPx150 / 2) {
         if (sheet.borderCrop) {
           const sheetX = localX + sheet.widthPx150 / 2;
-          const sheetY = sheet.heightPx150 / 2 - localY;
+          const sheetY = localY + sheet.heightPx150 / 2;
           const crop = effectiveCrop(sheet.borderCrop, sheet);
           if (crop.kind === 'rect') {
             if (
@@ -927,7 +1036,45 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
       ref={sceneRef}
       className={styles.pdfScene}
       onPointerDown={(ev) => {
-        const shouldPan = ev.button === 2 || (ev.button === 0 && ev.shiftKey);
+        // PIVOT placement
+        if (rotateMode === 'pivot' && ev.button === 0 && !ev.shiftKey && selected) {
+          setRotateMode('direction');
+          pivotOffsetRef.current = clientToSheetPoint(selected, ev.clientX, ev.clientY);
+          return;
+        }
+        // DIRECTION placement
+        if (rotateMode === 'direction' && ev.button === 0 && !ev.shiftKey && pivotOffsetRef.current && selected) {
+          setGhostDirScreen(null);
+          setRotateMode('placed');
+          dirOffsetRef.current = clientToSheetPoint(selected, ev.clientX, ev.clientY);
+          return;
+        }
+        // PLACED -- hit test line, start drag or ignore
+        if (rotateMode === 'placed' && ev.button === 0 && !ev.shiftKey && pivotOffsetRef.current && dirOffsetRef.current && selected) {
+          const pivotScr = sheetPointToScreen(selected, pivotOffsetRef.current);
+          const useOrient = liveOrientDeg !== null ? liveOrientDeg : (selected.orientation ?? 0);
+          const a = useOrient * Math.PI / 180;
+          const du = (dirOffsetRef.current.x - pivotOffsetRef.current.x) * Math.cos(a) - (dirOffsetRef.current.y - pivotOffsetRef.current.y) * Math.sin(a);
+          const dv = (dirOffsetRef.current.x - pivotOffsetRef.current.x) * Math.sin(a) + (dirOffsetRef.current.y - pivotOffsetRef.current.y) * Math.cos(a);
+          const dirScr = {
+            x: pivotScr.x + du * zoomRef.current,
+            y: pivotScr.y + dv * zoomRef.current,
+          };
+          if (ptSegDist({ x: ev.clientX, y: ev.clientY }, pivotScr, dirScr) < 10) {
+            rotateDragRef.current = {
+              baselineOrientation: liveOrientDeg ?? selected.orientation ?? 0,
+              handle: selected.handle,
+              pivotOffsetX: pivotOffsetRef.current.x,
+              pivotOffsetY: pivotOffsetRef.current.y,
+              baseDirOffsetX: dirOffsetRef.current.x,
+              baseDirOffsetY: dirOffsetRef.current.y,
+            };
+            ev.currentTarget.setPointerCapture(ev.pointerId);
+          }
+          return;
+        }
+
+        const shouldPan = (ev.button === 2 || (ev.button === 0 && ev.shiftKey));
         if (shouldPan) {
           dragRef.current = { kind: 'pan', pointerX: ev.clientX, pointerY: ev.clientY, pan };
           ev.currentTarget.setPointerCapture(ev.pointerId);
@@ -950,16 +1097,42 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         }
         const sheet = hitSheet(ev.clientX, ev.clientY);
         if (!sheet) {
-          setSelectedHandle(null);
+          if (rotateMode === 'idle') setSelectedHandle(null);
           return;
         }
+        if (rotateMode !== 'idle' || cropMode) return;
         setSelectedHandle(sheet.handle);
         dragRef.current = { kind: 'sheet', pointerX: ev.clientX, pointerY: ev.clientY, offset: sheet.flatOffsetPx, handle: sheet.handle };
         ev.currentTarget.setPointerCapture(ev.pointerId);
       }}
       onPointerMove={(ev) => {
+        if (rotateMode === 'direction' && pivotOffsetRef.current) {
+          setGhostDirScreen({ x: ev.clientX, y: ev.clientY });
+        }
+        if (rotateDragRef.current) {
+          const state = rotateDragRef.current;
+          if (!selected) return;
+          const pivotScr = sheetPointToScreen(selected, { x: state.pivotOffsetX, y: state.pivotOffsetY });
+          const currentAngleRad = Math.atan2(ev.clientY - pivotScr.y, ev.clientX - pivotScr.x);
+          const phi = Math.atan2(state.baseDirOffsetY - state.pivotOffsetY, state.baseDirOffsetX - state.pivotOffsetX);
+          const newOrientation = ((currentAngleRad - phi) * 180 / Math.PI % 360 + 360) % 360;
+          lastPreviewedOrientRef.current = newOrientation;
+          setLiveOrientDeg(newOrientation);
+          const pivotScenePx = sheetPointToScene(selected, { x: state.pivotOffsetX, y: state.pivotOffsetY });
+          engineHolder.current?.previewPdfOrientation(state.handle, newOrientation, pivotScenePx, state.baselineOrientation, selected.flatOffsetPx);
+          const a = newOrientation * Math.PI / 180;
+          const dx = (ev.clientX - pivotScr.x) / zoomRef.current;
+          const dy = (ev.clientY - pivotScr.y) / zoomRef.current;
+          dirOffsetRef.current = {
+            x: state.pivotOffsetX + dx * Math.cos(a) + dy * Math.sin(a),
+            y: state.pivotOffsetY - dx * Math.sin(a) + dy * Math.cos(a),
+          };
+          return;
+        }
+
         const drag = dragRef.current;
         if (!drag) return;
+
         if (drag.kind === 'pan') {
           setPan({
             x: drag.pan.x + ev.clientX - drag.pointerX,
@@ -981,6 +1154,12 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         });
       }}
       onPointerUp={(ev) => {
+        if (rotateDragRef.current) {
+          rotateDragRef.current = null;
+          if (ev.currentTarget.hasPointerCapture(ev.pointerId)) ev.currentTarget.releasePointerCapture(ev.pointerId);
+          // do NOT commit, do NOT exit -- user can drag again
+          return;
+        }
         dragRef.current = null;
         if (ev.currentTarget.hasPointerCapture(ev.pointerId)) ev.currentTarget.releasePointerCapture(ev.pointerId);
       }}
@@ -1000,8 +1179,31 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
               height: sheet.heightPx150,
               cursor: selected?.handle === sheet.handle && cropMode
                 ? 'crosshair'
-                : sheet.borderCrop ? 'default' : 'move',
-              transform: `translate(${sheet.flatOffsetPx.x - sheet.widthPx150 / 2}px, ${-sheet.flatOffsetPx.y - sheet.heightPx150 / 2}px) rotate(${-(sheet.orientation ?? 0)}deg)`,
+                : selected?.handle === sheet.handle && rotateMode !== 'idle'
+                  ? 'crosshair'
+                  : sheet.borderCrop ? 'default' : 'move',
+              transformOrigin: rotateMode === 'placed' && selected?.handle === sheet.handle && pivotOffsetRef.current
+                ? `${pivotOffsetRef.current.x}px ${pivotOffsetRef.current.y}px`
+                : undefined,
+              transform: (() => {
+                const liveOrient = liveOrientDeg !== null && selected?.handle === sheet.handle ? liveOrientDeg : (sheet.orientation ?? 0);
+                const usePivot = rotateMode === 'placed' && selected?.handle === sheet.handle && pivotOffsetRef.current;
+                let tx: number;
+                let ty: number;
+                if (usePivot && pivotOffsetRef.current) {
+                  const px = pivotOffsetRef.current.x;
+                  const py = pivotOffsetRef.current.y;
+                  const a0 = (sheet.orientation ?? 0) * Math.PI / 180;
+                  const A = px - sheet.widthPx150 / 2;
+                  const B = py - sheet.heightPx150 / 2;
+                  tx = A * Math.cos(a0) - B * Math.sin(a0) + sheet.flatOffsetPx.x - px;
+                  ty = A * Math.sin(a0) + B * Math.cos(a0) - sheet.flatOffsetPx.y - py;
+                } else {
+                  tx = sheet.flatOffsetPx.x - sheet.widthPx150 / 2;
+                  ty = -sheet.flatOffsetPx.y - sheet.heightPx150 / 2;
+                }
+                return `translate(${tx}px, ${ty}px) rotate(${liveOrient}deg)`;
+              })(),
             }}
           >
             <PdfSheetCanvas
@@ -1013,6 +1215,19 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
               cropActive={cropMode && sheet.handle === selected?.handle}
             />
             <PdfCropOverlayCanvas sheet={sheet} active={sheet.handle === selected?.handle && cropMode} />
+            {rotateMode !== 'idle' && selected?.handle === sheet.handle && (
+              <canvas
+                ref={overlayCanvasRef}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  pointerEvents: 'none',
+                  zIndex: 10,
+                }}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -1020,36 +1235,100 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         <div
           className={styles.pdfSheetToolbar}
           style={{ left: selectedToolbarAnchor.x, top: selectedToolbarAnchor.y }}
-          onPointerDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => { if (rotateMode === 'idle') e.stopPropagation(); }}
         >
           <span className={styles.listRowMeta}>{selected.label}</span>
-          <button
-            type="button"
-            className={styles.canvasToolBtn}
-            onClick={() => setPdfOrientation(selected.handle, ((selected.orientation ?? 0) + 359) % 360)}
-          >
-            Rotate -
-          </button>
-          <button
-            type="button"
-            className={styles.canvasToolBtn}
-            onClick={() => setPdfOrientation(selected.handle, ((selected.orientation ?? 0) + 1) % 360)}
-          >
-            Rotate +
-          </button>
+          {rotateMode === 'idle' ? (
+            <button
+              type="button"
+              className={styles.canvasToolBtn}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => {
+                originalOrientRef.current = selected?.orientation ?? 0;
+                lastPreviewedOrientRef.current = null;
+                setCropMode(false);
+                setRotateMode('pivot');
+              }}
+            >
+              Rotate
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className={styles.canvasToolBtn}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => {
+                  if (selected && lastPreviewedOrientRef.current !== null) {
+                    const newOrient = lastPreviewedOrientRef.current;
+                    const oldOrient = originalOrientRef.current ?? 0;
+                    if (pivotOffsetRef.current && newOrient !== oldOrient) {
+                      const ppScene = sheetPointToScene(selected, pivotOffsetRef.current);
+                      const fpx = selected.flatOffsetPx;
+                      const deltaRad = (oldOrient - newOrient) * Math.PI / 180;
+                      const dx = ppScene.x - fpx.x;
+                      const dy = ppScene.y - fpx.y;
+                      const cosD = Math.cos(deltaRad);
+                      const sinD = Math.sin(deltaRad);
+                      setPdfFlatOffset(selected.handle, { x: ppScene.x - (cosD * dx - sinD * dy), y: ppScene.y - (sinD * dx + cosD * dy) });
+                    }
+                    setPdfOrientation(selected.handle, newOrient);
+                  }
+                  setRotateMode('idle');
+                  setGhostDirScreen(null);
+                  rotateDragRef.current = null;
+                  lastPreviewedOrientRef.current = null;
+                  pivotOffsetRef.current = null;
+                  dirOffsetRef.current = null;
+                  setLiveOrientDeg(null);
+                }}
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                className={styles.canvasToolBtn}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => {
+                  if (selected && originalOrientRef.current !== null) {
+                    setPdfOrientation(selected.handle, originalOrientRef.current);
+                    engineHolder.current?.previewPdfOrientation(selected.handle, originalOrientRef.current);
+                  }
+                  setRotateMode('idle');
+                  setGhostDirScreen(null);
+                  rotateDragRef.current = null;
+                  lastPreviewedOrientRef.current = null;
+                  pivotOffsetRef.current = null;
+                  dirOffsetRef.current = null;
+                  setLiveOrientDeg(null);
+                }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
           <button
             type="button"
             className={`${styles.canvasToolBtn} ${cropMode ? styles.canvasToolBtnActive : ''}`}
-            onClick={() => setCropMode((value) => !value)}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              setRotateMode('idle');
+              rotateDragRef.current = null;
+              lastPreviewedOrientRef.current = null;
+              pivotOffsetRef.current = null;
+              dirOffsetRef.current = null;
+              setCropMode((value) => !value);
+            }}
           >
             Crop
           </button>
-          <button type="button" className={styles.canvasToolBtn} onClick={() => setPdfBorderCrop(selected.handle, null)}>
+          <button type="button" className={styles.canvasToolBtn} onPointerDown={(e) => e.stopPropagation()} onClick={() => setPdfBorderCrop(selected.handle, null)}>
             Clear Crop
           </button>
           <button
             type="button"
             className={`${styles.canvasToolBtn} ${selected.whiteThreshold === 0 ? '' : styles.canvasToolBtnActive}`}
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setWhiteThreshold(
               selected.handle,
               selected.whiteThreshold === 0 ? 240 : 0,
@@ -1692,6 +1971,7 @@ function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 'calibr
                 >
                   Set Distance
                 </button>
+         
               </>
             )}
           </>

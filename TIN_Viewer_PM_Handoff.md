@@ -38,6 +38,18 @@ implementers (imps).
   context to make old_string unique in the file
 - `npx tsc --noEmit` for build verification — NOT `npm run build` (EPERM in imp sandbox)
 - No `npm run build`
+- MANDATORY before every Edit: `grep -c "old_string" file` — must return 1.
+  If not 1, widen old_string with more surrounding context until unique. Do not proceed if count != 1.
+- After every Edit: `grep -n` to confirm change landed at expected line number.
+- Do not chain Edits without verifying each one landed first.
+- tsc errors outside the file being edited: ask the user before touching them.
+- Never rewrite a file from HEAD via python — if a file needs restoring, use `git restore`.
+- If `grep` returns "binary file matches", use `grep -a` and move on — it is not corruption.
+- When pre-existing errors are confirmed as pre-existing, trust it and stop re-testing.
+- NEVER declare a file truncated based on a tsc error alone. Read the file to its actual
+  final line before making any claim about truncation. Report the true final line number.
+- All handoffs must specify exact line numbers for every change. Imps must read those
+  exact lines before editing — no searching, no guessing.
 
 ---
 

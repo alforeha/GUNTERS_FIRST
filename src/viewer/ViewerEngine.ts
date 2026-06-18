@@ -569,6 +569,26 @@ export class ViewerEngine {
     this.requestRender();
   }
 
+  previewPdfOrientation(
+    handle: string,
+    orientationDeg: number,
+    pivotScenePx?: { x: number; y: number },
+    baselineOrientDeg?: number,
+    baseCenterScenePx?: { x: number; y: number },
+  ): void {
+    const pdf = this.pdfs.get(handle);
+    if (!pdf) return;
+    pdf.previewOrientation(orientationDeg, pivotScenePx, baselineOrientDeg, baseCenterScenePx);
+    this.requestRender();
+  }
+
+  getPdfGroupPositionScenePx(handle: string): { x: number; y: number } | null {
+    const pdf = this.pdfs.get(handle);
+    if (!pdf) return null;
+    const ppf = pdf.pixelsPerFoot();
+    return { x: pdf.group.position.x * ppf, y: pdf.group.position.y * ppf };
+  }
+
   addPointCloud(dataset: PointCloudDataset): string {
     if (this.disposed) throw new Error('ViewerEngine: addPointCloud after dispose');
     if (!dataset.octree) throw new Error('ViewerEngine: point cloud has no octree');
