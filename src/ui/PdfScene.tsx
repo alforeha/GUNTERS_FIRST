@@ -590,8 +590,12 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
           if (canvas.width !== sheet.widthPx150) canvas.width = sheet.widthPx150;
           if (canvas.height !== sheet.heightPx150) canvas.height = sheet.heightPx150;
           if (cropActive) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            if (sheet.whiteThreshold !== 0) {
+              ctx.clearRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            } else {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            }
             for (const tile of tilesRef.current.values()) {
               ctx.drawImage(tile.canvas, tile.x, tile.y, tile.width, tile.height);
             }
@@ -600,8 +604,12 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
             ctx.save();
             traceBorderCropSheetPx(ctx, sheet.borderCrop);
             ctx.clip();
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            if (sheet.whiteThreshold !== 0) {
+              ctx.clearRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            } else {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            }
             for (const tile of tilesRef.current.values()) {
               ctx.drawImage(tile.canvas, tile.x, tile.y, tile.width, tile.height);
             }
@@ -610,8 +618,12 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
             }
             ctx.restore();
           } else {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            if (sheet.whiteThreshold !== 0) {
+              ctx.clearRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            } else {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, sheet.widthPx150, sheet.heightPx150);
+            }
             for (const tile of tilesRef.current.values()) {
               ctx.drawImage(tile.canvas, tile.x, tile.y, tile.width, tile.height);
             }

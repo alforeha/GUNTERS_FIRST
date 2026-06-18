@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ViewerEngine, generateTestMesh } from '../viewer';
 import { useAppStore } from '../state/store';
 import { engineHolder } from './engineHolder';
-import { addSurfaceToScene } from './importController';
+import { addSurfaceToScene, getPdfSourceFile } from './importController';
 import {
   clearEditSelection,
   commitVertexEdit,
@@ -378,6 +378,19 @@ export function Viewport() {
     const engine = new ViewerEngine(container);
     engineHolder.current = engine;
     const store = useAppStore;
+
+    // Re-hydrate PDF sheets from store state into the fresh engine. This covers
+    // the StrictMode double-invoke path (effect fires, cleanup nulls engine,
+    // re-mounts with new engine) where addPdf calls in importController silently
+    // no-oped against engineHolder.current === null.
+    const initialState = store.getState();
+    initialState.pdfSheets.forEach((sheet, i) => {
+      const file = getPdfSourceFile(sheet.fileId);
+      if (file) {
+        engine.addPdf(sheet, file);
+        engine.setPdfRenderOrder(sheet.handle, i);
+      }
+    });
 
     engine.onCursorPosition((pos) => store.getState().setCursor(pos));
     engine.onNorthClick(() => store.getState().setCameraMode('top'));

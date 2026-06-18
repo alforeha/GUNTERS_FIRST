@@ -1,3 +1,26 @@
+# NOTES — ITEM17 PDF transparency toggle — 2026-06-17
+
+Status: COMPLETE. PM passed.
+
+## What changed
+
+- **src/viewer/RenderPdf.ts** — two edits:
+  1. Added `this.requestRender()` after `clearLoadedTiles()` in the `thresholdChanged` branch so the 3D render loop immediately re-runs `updateVisible` and re-fetches tiles.
+  2. In `decodeTile` (~line 777): force 3D to always use an active threshold: `whiteThreshold: this.sheet.whiteThreshold !== 0 ? this.sheet.whiteThreshold : 240`. 3D view always shows transparent PDFs regardless of the 2D toggle.
+
+- **src/ui/PdfScene.tsx** — fixed three draw-loop branches in `PdfSheetCanvas` that were painting a white `fillRect` behind tiles every frame, covering transparent pixels. Each branch now does `clearRect` when `sheet.whiteThreshold !== 0`, otherwise `fillRect` (opaque white). Applied to: `cropActive` branch, `borderCrop` branch (inside clip), and default branch.
+
+- **src/ui/Viewport.tsx** — PDF re-hydration after engine mount to handle React StrictMode double-invoke (PDFs silently dropped when engine was null during `confirmPdfImport`). After `engineHolder.current = engine`: iterates `state.pdfSheets`, calls `engine.addPdf(sheet, file)` and `engine.updatePdfSheet(sheet)` for each.
+
+## Key decisions
+
+- 3D view ALWAYS shows transparent PDF backgrounds (threshold forced to 240 if store value is 0)
+- 2D PDF Scene toggle controls 2D scene only
+- White `fillRect` in `renderBasePage` (worker) is intentional for PDF.js compositing -- NOT removed
+- `applyWhiteThreshold` sentinel 0 = early return (disabled) -- correct, unchanged
+
+---
+
 # NOTES — Phase 4 PDF Scene polish (ITEM13 + ITEM14) — 2026-06-17
 
 ## ITEM13: 2D/3D Y-axis inversion fix

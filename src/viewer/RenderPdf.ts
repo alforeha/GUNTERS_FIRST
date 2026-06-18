@@ -160,6 +160,7 @@ export class RenderPdf {
       this.notifyBoundsChanged();
     } else if (thresholdChanged) {
       this.clearLoadedTiles();
+      this.requestRender();
     }
     if (scaleChanged || northArrowChanged) {
       // Visibility-only: just toggle group.visible, no geometry rebuild
@@ -773,7 +774,7 @@ export class RenderPdf {
       id: messageId,
       pageIndex: this.sheet.pageIndex,
       window: tile.window,
-      whiteThreshold: this.sheet.whiteThreshold,
+      whiteThreshold: this.sheet.whiteThreshold !== 0 ? this.sheet.whiteThreshold : 240,
     };
     const response = await new Promise<PdfWorkerMessage>((resolve) => {
       this.pending.set(messageId, (msg) => {
