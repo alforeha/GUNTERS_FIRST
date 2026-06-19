@@ -102,13 +102,21 @@ Start with INVST handoff.
 - ITEM15: Sheet rotation direction. CSS negated, 3D correct (positive). PM passed.
 - ITEM16: 3D polygon crop texture masking via DataTexture per-pixel alpha. PM passed.
 - ITEM17: PDF transparency toggle — 2D clearRect fix, 3D always-transparent, Viewport re-hydration. PM passed.
+- ITEM19: Rotate mechanism. Live rotation about a fixed pivot, zoom-stable through repeated
+  zoom, orange line stays painted+grabbable, Done commits with no jump, Cancel reverts.
+  Root cause of the long bug chain: sceneToSheetPoint/sheetPointToScene had wrong matrix
+  math (self-inverse matrix + bad Y-flip); every placement/draw/hit-test/preview/commit
+  path inherited the error. Fixed at the source (INVST-20) after targeted fixes
+  (FIX-12/14/16/17v2/17v3/19) kept trading one coordinate bug for another. Also: input
+  gating split so PAN works in rotate/crop while sheet MOVE is disabled and rotate stays
+  armed until Done (FIX-16). FIX-14 sign convention preserved (CSS rotate +deg=CW, engine
+  rotation.z=-rad, applyTransform -rotation, deltaRad=degToRad(baseline)-rad). PM passed.
 
 ---
 
 ## PARKED ITEMS
 
 - Crop cursor polish (pointermove-based, not static CSS)
-- Drag rotate in group PDF Scene
 - Floating toolbar horizontal clamp near edges
 - Opacity slider in left panel
 - Sheet alignment feature (post-drape)

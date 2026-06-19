@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import { useAppStore, type PdfSheetEntry } from '../state/store';
+import { DEFAULT_PIXELS_PER_FOOT, pixelsPerFootForSheet } from '../viewer/RenderPdf';
 import type { BorderCrop, CropRect, PdfNorthArrow, PdfScaleBar, PdfKnownDistance } from '../core/contract';
 import type { PdfDecodeTileRequest, PdfOpenRequest, PdfWorkerMessage } from '../workers/pdf.worker';
 import {
@@ -796,11 +797,37 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     dirOffsetRef.current = null;
   }, [selectedHandle]);
 
+  const scaleFactorForSheet = (sheet: PdfSheetEntry): number => {
+    const ppf = pixelsPerFootForSheet(sheet);
+    return DEFAULT_PIXELS_PER_FOOT / ppf;
+  };
+
+  const minZoomRef = useRef(0.001);
+
   useEffect(() => {
     const el = sceneRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    setPan({ x: rect.width / 2, y: rect.height / 2 });
+    const vw = rect.width || 1;
+    const vh = rect.height || 1;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const sheet of sheets) {
+      const sf = scaleFactorForSheet(sheet);
+      const w = sheet.widthPx150 * sf;
+      const h = sheet.heightPx150 * sf;
+      const cx = sheet.flatOffsetPx.x * sf;
+      const cy = sheet.flatOffsetPx.y * sf;
+      minX = Math.min(minX, cx - w / 2);
+      maxX = Math.max(maxX, cx + w / 2);
+      minY = Math.min(minY, cy - h / 2);
+      maxY = Math.max(maxY, cy + h / 2);
+    }
+    const bbW = Math.max(1, maxX - minX);
+    const bbH = Math.max(1, maxY - minY);
+    const fitZoom = Math.min(vw / bbW, vh / bbH) * 0.9;
+    minZoomRef.current = Math.max(fitZoom * 0.25, 0.001);
+    setZoom(fitZoom);
+    setPan({ x: vw / 2 - (minX + bbW / 2) * fitZoom, y: vh / 2 + (minY + bbH / 2) * fitZoom });
   }, []);
 
   // Draw rotate-mode overlay on the overlay canvas (sheet-local px)
@@ -815,10 +842,11 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     canvas.height = parent.clientHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (rotateMode === 'idle' || !pivotOffsetRef.current) return;
+    const sfOv = selected ? scaleFactorForSheet(selected) : 1;
     const px = pivotOffsetRef.current.x;
     const py = pivotOffsetRef.current.y;
     ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.arc(px, py, 5 / sfOv, 0, Math.PI * 2);
     ctx.fillStyle = '#ff6600';
     ctx.fill();
     if (!dirOffsetRef.current) {
@@ -833,7 +861,7 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         ctx.moveTo(px, py);
         ctx.lineTo(gp.x, gp.y);
         ctx.strokeStyle = 'rgba(255, 102, 0, 0.45)';
-        ctx.lineWidth = 2 / z;
+        ctx.lineWidth = 2 / z / sfOv;
         ctx.setLineDash([6, 3]);
         ctx.stroke();
         ctx.setLineDash([]);
@@ -846,12 +874,12 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     ctx.moveTo(px, py);
     ctx.lineTo(dx2, dy2);
     ctx.strokeStyle = '#ff6600';
-    ctx.lineWidth = 2 / zoom;
+    ctx.lineWidth = 2 / zoom / sfOv;
     ctx.setLineDash([6, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.beginPath();
-    ctx.arc(dx2, dy2, 5, 0, Math.PI * 2);
+    ctx.arc(dx2, dy2, 5 / sfOv, 0, Math.PI * 2);
     ctx.fillStyle = '#ff6600';
     ctx.fill();
     return () => {
@@ -870,9 +898,12 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
   };
 
   const sceneToSheetPoint = (sheet: PdfSheetEntry, scenePoint: Point2): Point2 => {
+    const sf = scaleFactorForSheet(sheet);
     const a = (sheet.orientation ?? 0) * Math.PI / 180;
-    const dx = scenePoint.x - sheet.flatOffsetPx.x;
-    const dy = scenePoint.y - sheet.flatOffsetPx.y;
+    const sx = scenePoint.x / sf;
+    const sy = scenePoint.y / sf;
+    const dx = sx - sheet.flatOffsetPx.x;
+    const dy = sy - sheet.flatOffsetPx.y;
     return {
       x: dx * Math.cos(a) - dy * Math.sin(a) + sheet.widthPx150 / 2,
       y: -dx * Math.sin(a) - dy * Math.cos(a) + sheet.heightPx150 / 2,
@@ -883,12 +914,13 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     sceneToSheetPoint(sheet, screenToScene(clientX, clientY));
 
   const sheetPointToScene = (sheet: PdfSheetEntry, sp: Point2): Point2 => {
+    const sf = scaleFactorForSheet(sheet);
     const a = (sheet.orientation ?? 0) * Math.PI / 180;
     const A = sp.x - sheet.widthPx150 / 2;
     const B = sp.y - sheet.heightPx150 / 2;
     return {
-      x: A * Math.cos(a) - B * Math.sin(a) + sheet.flatOffsetPx.x,
-      y: -A * Math.sin(a) - B * Math.cos(a) + sheet.flatOffsetPx.y,
+      x: (A * Math.cos(a) - B * Math.sin(a) + sheet.flatOffsetPx.x) * sf,
+      y: (-A * Math.sin(a) - B * Math.cos(a) + sheet.flatOffsetPx.y) * sf,
     };
   };
 
@@ -907,9 +939,12 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     const p = screenToScene(clientX, clientY);
     for (let i = sheets.length - 1; i >= 0; i--) {
       const sheet = sheets[i]!;
+      const sf = scaleFactorForSheet(sheet);
       const a = (sheet.orientation ?? 0) * Math.PI / 180;
-      const dx = p.x - sheet.flatOffsetPx.x;
-      const dy = p.y - sheet.flatOffsetPx.y;
+      const sx = p.x / sf;
+      const sy = p.y / sf;
+      const dx = sx - sheet.flatOffsetPx.x;
+      const dy = sy - sheet.flatOffsetPx.y;
       const localX = dx * Math.cos(a) - dy * Math.sin(a);
       const localY = -dx * Math.sin(a) - dy * Math.cos(a);
       if (Math.abs(localX) <= sheet.widthPx150 / 2 && Math.abs(localY) <= sheet.heightPx150 / 2) {
@@ -970,7 +1005,7 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         for (const sheet of sheetsRef.current) {
           const handle = sheetCanvasRefs.current.get(sheet.handle);
           if (!handle) continue;
-          const sheetPan: Point2 = { x: p.x + sheet.flatOffsetPx.x * z, y: p.y - sheet.flatOffsetPx.y * z };
+          const sheetPan: Point2 = { x: p.x + sheet.flatOffsetPx.x * scaleFactorForSheet(sheet) * z, y: p.y - sheet.flatOffsetPx.y * scaleFactorForSheet(sheet) * z };
           const visWindows = computeVisibleTileWindows(
             sheetPan,
             z,
@@ -1000,7 +1035,7 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         x: (ev.clientX - rect.left - currentPan.x) / currentZoom,
         y: (ev.clientY - rect.top - currentPan.y) / currentZoom,
       };
-      const nextZoom = Math.max(0.03, Math.min(2.5, currentZoom * (ev.deltaY < 0 ? 1.12 : 0.88)));
+      const nextZoom = Math.max(minZoomRef.current, Math.min(2.5, currentZoom * (ev.deltaY < 0 ? 1.12 : 0.88)));
       setZoom(nextZoom);
       setPan({
         x: ev.clientX - rect.left - before.x * nextZoom,
@@ -1023,8 +1058,9 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     if (!selected) return null;
     const rect = sceneRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    const rawX = pan.x + selected.flatOffsetPx.x * zoom;
-    const rawY = pan.y - (selected.flatOffsetPx.y + selected.heightPx150 / 2) * zoom - 12;
+    const sf = scaleFactorForSheet(selected);
+    const rawX = pan.x + selected.flatOffsetPx.x * sf * zoom;
+    const rawY = pan.y - (selected.flatOffsetPx.y * sf + selected.heightPx150 / 2) * zoom - 12;
     return {
       x: Math.max(8, Math.min(rect.width - 8, rawX)),
       y: Math.max(8, rawY),
@@ -1056,9 +1092,10 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
           const a = useOrient * Math.PI / 180;
           const du = (dirOffsetRef.current.x - pivotOffsetRef.current.x) * Math.cos(a) - (dirOffsetRef.current.y - pivotOffsetRef.current.y) * Math.sin(a);
           const dv = (dirOffsetRef.current.x - pivotOffsetRef.current.x) * Math.sin(a) + (dirOffsetRef.current.y - pivotOffsetRef.current.y) * Math.cos(a);
+          const rsfHit = scaleFactorForSheet(selected);
           const dirScr = {
-            x: pivotScr.x + du * zoomRef.current,
-            y: pivotScr.y + dv * zoomRef.current,
+            x: pivotScr.x + du * rsfHit * zoomRef.current,
+            y: pivotScr.y + dv * rsfHit * zoomRef.current,
           };
           if (ptSegDist({ x: ev.clientX, y: ev.clientY }, pivotScr, dirScr) < 10) {
             rotateDragRef.current = {
@@ -1118,11 +1155,12 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
           const newOrientation = ((currentAngleRad - phi) * 180 / Math.PI % 360 + 360) % 360;
           lastPreviewedOrientRef.current = newOrientation;
           setLiveOrientDeg(newOrientation);
+          const rsfDrag = scaleFactorForSheet(selected);
           const pivotScenePx = sheetPointToScene(selected, { x: state.pivotOffsetX, y: state.pivotOffsetY });
-          engineHolder.current?.previewPdfOrientation(state.handle, newOrientation, pivotScenePx, state.baselineOrientation, selected.flatOffsetPx);
+          engineHolder.current?.previewPdfOrientation(state.handle, newOrientation, { x: pivotScenePx.x / rsfDrag, y: pivotScenePx.y / rsfDrag }, state.baselineOrientation, selected.flatOffsetPx);
           const a = newOrientation * Math.PI / 180;
-          const dx = (ev.clientX - pivotScr.x) / zoomRef.current;
-          const dy = (ev.clientY - pivotScr.y) / zoomRef.current;
+          const dx = (ev.clientX - pivotScr.x) / zoomRef.current / rsfDrag;
+          const dy = (ev.clientY - pivotScr.y) / zoomRef.current / rsfDrag;
           dirOffsetRef.current = {
             x: state.pivotOffsetX + dx * Math.cos(a) + dy * Math.sin(a),
             y: state.pivotOffsetY - dx * Math.sin(a) + dy * Math.cos(a),
@@ -1148,9 +1186,11 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
           setPdfBorderCrop(sheet.handle, moveCropVertex(sheet.borderCrop, vertexIndex, localPoint, sheet));
           return;
         }
+        const sheet2 = sheetsRef.current.find((entry) => entry.handle === drag.handle);
+        const dsf = sheet2 ? scaleFactorForSheet(sheet2) : 1;
         setPdfFlatOffset(drag.handle, {
-          x: drag.offset.x + (ev.clientX - drag.pointerX) / zoom,
-          y: drag.offset.y - (ev.clientY - drag.pointerY) / zoom,
+          x: drag.offset.x + (ev.clientX - drag.pointerX) / zoom / dsf,
+          y: drag.offset.y - (ev.clientY - drag.pointerY) / zoom / dsf,
         });
       }}
       onPointerUp={(ev) => {
@@ -1194,15 +1234,17 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
                   const px = pivotOffsetRef.current.x;
                   const py = pivotOffsetRef.current.y;
                   const a0 = (sheet.orientation ?? 0) * Math.PI / 180;
+                  const sfP = scaleFactorForSheet(sheet);
                   const A = px - sheet.widthPx150 / 2;
                   const B = py - sheet.heightPx150 / 2;
-                  tx = A * Math.cos(a0) - B * Math.sin(a0) + sheet.flatOffsetPx.x - px;
-                  ty = A * Math.sin(a0) + B * Math.cos(a0) - sheet.flatOffsetPx.y - py;
+                  tx = (A * Math.cos(a0) - B * Math.sin(a0) + sheet.flatOffsetPx.x) * sfP - px;
+                  ty = (A * Math.sin(a0) + B * Math.cos(a0) - sheet.flatOffsetPx.y) * sfP - py;
                 } else {
-                  tx = sheet.flatOffsetPx.x - sheet.widthPx150 / 2;
-                  ty = -sheet.flatOffsetPx.y - sheet.heightPx150 / 2;
+                  tx = sheet.flatOffsetPx.x * scaleFactorForSheet(sheet) - sheet.widthPx150 / 2;
+                  ty = -sheet.flatOffsetPx.y * scaleFactorForSheet(sheet) - sheet.heightPx150 / 2;
                 }
-                return `translate(${tx}px, ${ty}px) rotate(${liveOrient}deg)`;
+                const sf2 = scaleFactorForSheet(sheet);
+                return `translate(${tx}px, ${ty}px) rotate(${liveOrient}deg) scale(${sf2}, ${sf2})`;
               })(),
             }}
           >
@@ -1263,14 +1305,17 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
                     const newOrient = lastPreviewedOrientRef.current;
                     const oldOrient = originalOrientRef.current ?? 0;
                     if (pivotOffsetRef.current && newOrient !== oldOrient) {
+                      const rsf = scaleFactorForSheet(selected);
                       const ppScene = sheetPointToScene(selected, pivotOffsetRef.current);
                       const fpx = selected.flatOffsetPx;
                       const deltaRad = (oldOrient - newOrient) * Math.PI / 180;
-                      const dx = ppScene.x - fpx.x;
-                      const dy = ppScene.y - fpx.y;
+                      const dx = ppScene.x - fpx.x * rsf;
+                      const dy = ppScene.y - fpx.y * rsf;
                       const cosD = Math.cos(deltaRad);
                       const sinD = Math.sin(deltaRad);
-                      setPdfFlatOffset(selected.handle, { x: ppScene.x - (cosD * dx - sinD * dy), y: ppScene.y - (sinD * dx + cosD * dy) });
+                      const newRawX = (ppScene.x - (cosD * dx - sinD * dy)) / rsf;
+                      const newRawY = (ppScene.y - (sinD * dx + cosD * dy)) / rsf;
+                      setPdfFlatOffset(selected.handle, { x: newRawX, y: newRawY });
                     }
                     setPdfOrientation(selected.handle, newOrient);
                   }

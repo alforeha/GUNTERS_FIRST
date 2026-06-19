@@ -8,7 +8,7 @@ import type {
 import type { Vec3 } from './geometry';
 
 const TILE_SIZE_PX = 1024;
-const DEFAULT_PIXELS_PER_FOOT = 100;
+export const DEFAULT_PIXELS_PER_FOOT = 100;
 const MAX_CONCURRENT_TILE_DECODES = 4;
 
 interface PdfTileState {
@@ -1103,7 +1103,7 @@ export class RenderPdf {
   }
 }
 
-function pixelsPerFootForSheet(sheet: Pick<PdfRenderableSheet, 'calibration'>): number {
+export function pixelsPerFootForSheet(sheet: Pick<PdfRenderableSheet, 'calibration'>): number {
   const calibration: PdfCalibration | null = sheet.calibration;
   return calibration?.unit === 'foot' && calibration.pixelsPerUnit > 0
     ? calibration.pixelsPerUnit
