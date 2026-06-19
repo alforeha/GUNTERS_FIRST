@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   useAppStore,
   type ElementKind,
@@ -13,14 +12,14 @@ import {
   removeSurface,
 } from '../importController';
 import { formatBytes, ELEMENT_META } from './shared';
+import { RowShell } from './RowShell';
 import styles from '../App.module.css';
 
-export function SurfaceRow({ entry }: { entry: SurfaceEntry }) {
+export function SurfaceRow({ entry, isExpanded, onToggle }: { entry: SurfaceEntry; isExpanded: boolean; onToggle: () => void }) {
   const activeHandle = useAppStore((s) => s.activeHandle);
   const editSurfaceHandle = useAppStore((s) => s.editSurfaceHandle);
   const importNotes = useAppStore((s) => s.importNotes);
   const setNotesHandle = useAppStore((s) => s.setNotesHandle);
-  const [expanded, setExpanded] = useState(false);
 
   const active = entry.handle === activeHandle;
   const d = entry.display;
@@ -33,9 +32,10 @@ export function SurfaceRow({ entry }: { entry: SurfaceEntry }) {
   };
 
   return (
-    <div
+    <RowShell
       className={`${styles.listRow} ${active ? styles.listRowActive : ''}`}
-      onClick={() => {
+      onToggle={onToggle}
+      onRowClick={() => {
         if (!editSurfaceHandle || editSurfaceHandle === entry.handle) setActiveSurface(entry.handle);
       }}
       role="button"
@@ -108,18 +108,9 @@ export function SurfaceRow({ entry }: { entry: SurfaceEntry }) {
           value={d.faces.color}
           onChange={(ev) => patchSurfaceElement(entry.handle, 'faces', { color: ev.target.value })}
         />
-        <span className={styles.rowSpacer} />
-        <button
-          type="button"
-          className={styles.iconBtn}
-          title={expanded ? 'Collapse' : 'Per-element settings'}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? '^' : 'v'}
-        </button>
       </div>
 
-      {expanded && (
+      {isExpanded && (
         <div className={styles.rowExpand} onClick={(ev) => ev.stopPropagation()}>
           {ELEMENT_META.filter(({ kind }) => elementAvailable(kind)).map(({ kind, label }) => (
             <div key={kind} className={styles.elemRow}>
@@ -216,6 +207,6 @@ export function SurfaceRow({ entry }: { entry: SurfaceEntry }) {
           </div>
         </div>
       )}
-    </div>
+    </RowShell>
   );
 }

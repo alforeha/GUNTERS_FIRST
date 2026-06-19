@@ -634,6 +634,33 @@
   color: var(--text-dim);
 }
 
+.sectionHeaderExpanded {
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 12px;
+  margin-bottom: 0;
+  position: relative;
+}
+
+.sectionCollapseBtn {
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: var(--bg-inset);
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
 .sectionActionBtn {
   flex: none;
   padding: 3px 8px;

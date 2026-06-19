@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   useAppStore,
   type GeotiffEntry,
@@ -10,6 +9,7 @@ import {
   removeGeotiff,
 } from '../importController';
 import { formatBytes } from './shared';
+import { RowShell } from './RowShell';
 import styles from '../App.module.css';
 
 export function GeotiffRow({
@@ -17,19 +17,22 @@ export function GeotiffRow({
   surfaces,
   groupName,
   memberRow = false,
+  isExpanded,
+  onToggle,
 }: {
   entry: GeotiffEntry;
   surfaces: { handle: string; name: string }[];
   groupName?: string;
   memberRow?: boolean;
+  isExpanded?: boolean;
+  onToggle?: () => void;
 }) {
   const importNotes = useAppStore((s) => s.importNotes);
   const setNotesHandle = useAppStore((s) => s.setNotesHandle);
-  const [expanded, setExpanded] = useState(false);
   const targetName = surfaces.find((surface) => surface.handle === entry.drapeTarget)?.name;
 
-  return (
-    <div className={`${styles.listRow} ${memberRow ? styles.groupMemberRow : ''}`} style={{ cursor: 'default' }}>
+  const inner = (
+    <>
       <div className={styles.listRowTop}>
         <div className={styles.listRowName}>{entry.name}</div>
         <span className={styles.dxfIcon}>{groupName ?? 'TIF'}</span>
@@ -68,19 +71,9 @@ export function GeotiffRow({
         >
           x
         </button>
-        {!memberRow && (
-          <button
-            type="button"
-            className={styles.iconBtn}
-            title={expanded ? 'Collapse' : 'Metadata'}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? '^' : 'v'}
-          </button>
-        )}
       </div>
 
-      {(expanded || memberRow) && (
+      {(isExpanded || memberRow) && (
         <div className={styles.rowExpand}>
           <div className={styles.listRowMeta}>
             {entry.samplesPerPixel} bands
@@ -131,6 +124,20 @@ export function GeotiffRow({
           )}
         </div>
       )}
-    </div>
+    </>
+  );
+
+  if (memberRow) {
+    return (
+      <div className={`${styles.listRow} ${styles.groupMemberRow}`} style={{ cursor: 'default' }}>
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <RowShell className={styles.listRow} style={{ cursor: 'default' }} onToggle={onToggle!}>
+      {inner}
+    </RowShell>
   );
 }

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { type PdfSheetEntry } from '../../state/store';
 import {
   setPdfVisible,
@@ -10,16 +9,13 @@ import {
   setScaleBar,
   setKnownDistance,
 } from '../importController';
+import { RowShell } from './RowShell';
 import styles from '../App.module.css';
 
-export function PdfSheetRow({ entry, compact = false, grouped = false }: { entry: PdfSheetEntry; compact?: boolean; grouped?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className={styles.listRow} style={compact ? { marginLeft: 10 } : undefined}>
+export function PdfSheetRow({ entry, compact = false, grouped = false, isExpanded, onToggle }: { entry: PdfSheetEntry; compact?: boolean; grouped?: boolean; isExpanded?: boolean; onToggle?: () => void }) {
+  const inner = (
+    <>
       <div className={styles.listRowTop}>
-        <button type="button" className={styles.iconBtn} onClick={() => setExpanded((v) => !v)}>
-          {expanded ? 'v' : '>'}
-        </button>
         <div className={styles.listRowName}>{entry.label}</div>
         <span className={styles.listRowMeta}>
           page {entry.pageIndex + 1} · {entry.widthPx150.toLocaleString()} x {entry.heightPx150.toLocaleString()}
@@ -45,7 +41,7 @@ export function PdfSheetRow({ entry, compact = false, grouped = false }: { entry
           Orient
         </button>
       </div>
-      {expanded && (
+      {isExpanded && (
         <div className={styles.rowExpand}>
           {!grouped && (
             <button type="button" className={styles.actionBtn} title="Remove PDF" onClick={() => removePdfSheet(entry.handle)}>
@@ -128,6 +124,20 @@ export function PdfSheetRow({ entry, compact = false, grouped = false }: { entry
           )}
         </div>
       )}
-    </div>
+    </>
+  );
+
+  if (grouped || compact) {
+    return (
+      <div className={styles.listRow} style={compact ? { marginLeft: 10 } : undefined}>
+        {inner}
+      </div>
+    );
+  }
+
+  return (
+    <RowShell className={styles.listRow} onToggle={onToggle!}>
+      {inner}
+    </RowShell>
   );
 }

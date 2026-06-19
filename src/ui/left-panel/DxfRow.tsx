@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   useAppStore,
   type DxfEntry,
@@ -10,22 +9,26 @@ import {
   patchDxfLayerDisplay,
 } from '../importController';
 import { formatBytes } from './shared';
+import { RowShell } from './RowShell';
 import styles from '../App.module.css';
 
 export function DxfRow({
   entry,
   surfaces,
+  isExpanded,
+  onToggle,
 }: {
   entry: DxfEntry;
   surfaces: { handle: string; name: string }[];
+  isExpanded: boolean;
+  onToggle: () => void;
 }) {
   const importNotes = useAppStore((s) => s.importNotes);
   const setNotesHandle = useAppStore((s) => s.setNotesHandle);
-  const [expanded, setExpanded] = useState(false);
   const targetName = surfaces.find((surface) => surface.handle === entry.drapeTarget)?.name;
 
   return (
-    <div className={styles.listRow} style={{ cursor: 'default' }}>
+    <RowShell className={styles.listRow} style={{ cursor: 'default' }} onToggle={onToggle}>
       <div className={styles.listRowTop}>
         <span className={styles.dxfIcon}>DXF</span>
         <div className={styles.listRowName}>{entry.name}</div>
@@ -60,17 +63,9 @@ export function DxfRow({
         >
           x
         </button>
-        <button
-          type="button"
-          className={styles.iconBtn}
-          title={expanded ? 'Collapse' : 'Layers'}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? '^' : 'v'}
-        </button>
       </div>
 
-      {expanded && (
+      {isExpanded && (
         <div className={styles.rowExpand}>
           <div className={styles.listRowMeta}>
             {entry.entityCount.toLocaleString()} polylines
@@ -138,6 +133,6 @@ export function DxfRow({
           </div>
         </div>
       )}
-    </div>
+    </RowShell>
   );
 }

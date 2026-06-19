@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useAppStore, type PointCloudEntry } from '../../state/store';
 import {
   setPointCloudVisible,
@@ -12,17 +11,17 @@ import {
 } from '../importController';
 import { classLabel } from '../../viewer/pointCloudLod';
 import { formatBytes, DISPLAY_MODE_LABELS } from './shared';
+import { RowShell } from './RowShell';
 import styles from '../App.module.css';
 
-export function PointCloudRow({ entry }: { entry: PointCloudEntry }) {
+export function PointCloudRow({ entry, isExpanded, onToggle }: { entry: PointCloudEntry; isExpanded: boolean; onToggle: () => void }) {
   const importNotes = useAppStore((s) => s.importNotes);
   const setNotesHandle = useAppStore((s) => s.setNotesHandle);
   const geotiffs = useAppStore((s) => s.geotiffs);
-  const [expanded, setExpanded] = useState(false);
   const hasGeotiff = geotiffs.length > 0;
 
   return (
-    <div className={styles.listRow} style={{ cursor: 'default' }}>
+    <RowShell className={styles.listRow} style={{ cursor: 'default' }} onToggle={onToggle}>
       <div className={styles.listRowTop}>
         <div className={styles.listRowName}>{entry.name}</div>
         <span className={styles.dxfIcon}>LAS</span>
@@ -59,17 +58,9 @@ export function PointCloudRow({ entry }: { entry: PointCloudEntry }) {
         >
           x
         </button>
-        <button
-          type="button"
-          className={styles.iconBtn}
-          title={expanded ? 'Collapse' : 'Metadata'}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? '^' : 'v'}
-        </button>
       </div>
 
-      {expanded && (
+      {isExpanded && (
         <div className={styles.rowExpand}>
           <div className={styles.listRowMeta}>
             LAS {entry.lasVersion} · format {entry.pointFormat}
@@ -198,6 +189,6 @@ export function PointCloudRow({ entry }: { entry: PointCloudEntry }) {
           </div>
         </div>
       )}
-    </div>
+    </RowShell>
   );
 }

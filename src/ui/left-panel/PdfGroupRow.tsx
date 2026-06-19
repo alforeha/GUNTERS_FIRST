@@ -1,11 +1,10 @@
-import { useState } from 'react';
 import { type PdfGroupEntry, type PdfSheetEntry } from '../../state/store';
 import { setPdfGroupSheetOrder, setPdfVisible, openPdfGroupScene } from '../importController';
 import { PdfSheetRow } from './PdfSheetRow';
+import { RowShell } from './RowShell';
 import styles from '../App.module.css';
 
-export function PdfGroupRow({ group, entries }: { group: PdfGroupEntry; entries: PdfSheetEntry[] }) {
-  const [expanded, setExpanded] = useState(true);
+export function PdfGroupRow({ group, entries, isExpanded, onToggle }: { group: PdfGroupEntry; entries: PdfSheetEntry[]; isExpanded: boolean; onToggle: () => void }) {
   const visible = entries.some((entry) => entry.visible);
   const moveSheet = (handle: string, dir: 1 | -1): void => {
     const idx = group.sheetIds.indexOf(handle);
@@ -17,11 +16,8 @@ export function PdfGroupRow({ group, entries }: { group: PdfGroupEntry; entries:
     setPdfGroupSheetOrder(group.id, next);
   };
   return (
-    <div className={styles.listRow}>
+    <RowShell className={styles.listRow} onToggle={onToggle}>
       <div className={styles.listRowTop}>
-        <button type="button" className={styles.iconBtn} onClick={() => setExpanded((v) => !v)}>
-          {expanded ? 'v' : '>'}
-        </button>
         <div className={styles.listRowName}>{group.label}</div>
         <span className={styles.listRowMeta}>{entries.length} PDFs</span>
         <span className={styles.rowSpacer} />
@@ -37,7 +33,7 @@ export function PdfGroupRow({ group, entries }: { group: PdfGroupEntry; entries:
           Open
         </button>
       </div>
-      {expanded && (
+      {isExpanded && (
         <div className={styles.rowExpand}>
           {entries.map((entry, index) => (
             <div key={entry.handle} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
@@ -68,6 +64,6 @@ export function PdfGroupRow({ group, entries }: { group: PdfGroupEntry; entries:
           ))}
         </div>
       )}
-    </div>
+    </RowShell>
   );
 }

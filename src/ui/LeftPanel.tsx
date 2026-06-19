@@ -30,11 +30,32 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
   const pointClouds = useAppStore((s) => s.pointClouds);
   const [batchOpen, setBatchOpen] = useState(false);
   const [pdfGroupOpen, setPdfGroupOpen] = useState(false);
+  const [expandedHandle, setExpandedHandle] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const groupedHandles = new Set(geotiffGroups.flatMap((group) => group.handles));
   const ungroupedGeotiffs = geotiffs.filter((entry) => !groupedHandles.has(entry.handle));
   const groupedPdfSheets = new Set(pdfGroups.flatMap((group) => group.sheetIds));
   const ungroupedPdfSheets = pdfSheets.filter((entry) => !groupedPdfSheets.has(entry.handle));
+
+  const toggleExpand = (handle: string) => {
+    setExpandedHandle((prev) => (prev === handle ? null : handle));
+  };
+
+  const anyExpanded = expandedHandle !== null;
+
+  const surfaceHandles = new Set(surfaces.map((s) => s.handle));
+  const dxfHandles = new Set(dxfs.map((d) => d.handle));
+  const geotiffGroupHandles = new Set(geotiffGroups.map((g) => g.id));
+  const geotiffHandles = new Set(ungroupedGeotiffs.map((g) => g.handle));
+  const pdfGroupHandles = new Set(pdfGroups.map((g) => g.id));
+  const pdfSheetHandles = new Set(ungroupedPdfSheets.map((s) => s.handle));
+  const pointCloudHandles = new Set(pointClouds.map((p) => p.handle));
+
+  const surfaceSectionExpanded = anyExpanded && surfaceHandles.has(expandedHandle!);
+  const dxfSectionExpanded = anyExpanded && dxfHandles.has(expandedHandle!);
+  const geotiffSectionExpanded = anyExpanded && (geotiffGroupHandles.has(expandedHandle!) || geotiffHandles.has(expandedHandle!));
+  const pdfSectionExpanded = anyExpanded && (pdfGroupHandles.has(expandedHandle!) || pdfSheetHandles.has(expandedHandle!));
+  const pointCloudSectionExpanded = anyExpanded && pointCloudHandles.has(expandedHandle!);
 
   return (
     <aside
@@ -66,22 +87,43 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
         ) : (
           <>
             {surfaces.length > 0 && (
-              <DatasetSection title="Surfaces">
-                <SurfaceMasterBar />
+              <DatasetSection
+                title="Surfaces"
+                sectionExpanded={surfaceSectionExpanded}
+                onSectionCollapse={() => setExpandedHandle(null)}
+              >
+                <div style={anyExpanded ? { display: 'none' } : undefined}>
+                  <SurfaceMasterBar />
+                </div>
                 {surfaces.map((entry) => (
-                  <SurfaceRow key={entry.handle} entry={entry} />
+                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                    <SurfaceRow
+                      entry={entry}
+                      isExpanded={expandedHandle === entry.handle}
+                      onToggle={() => toggleExpand(entry.handle)}
+                    />
+                  </div>
                 ))}
               </DatasetSection>
             )}
             {dxfs.length > 0 && (
-              <DatasetSection title="DXF Files">
-                <DxfMasterBar />
+              <DatasetSection
+                title="DXF Files"
+                sectionExpanded={dxfSectionExpanded}
+                onSectionCollapse={() => setExpandedHandle(null)}
+              >
+                <div style={anyExpanded ? { display: 'none' } : undefined}>
+                  <DxfMasterBar />
+                </div>
                 {dxfs.map((entry) => (
-                  <DxfRow
-                    key={entry.handle}
-                    entry={entry}
-                    surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
-                  />
+                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                    <DxfRow
+                      entry={entry}
+                      surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
+                      isExpanded={expandedHandle === entry.handle}
+                      onToggle={() => toggleExpand(entry.handle)}
+                    />
+                  </div>
                 ))}
               </DatasetSection>
             )}
@@ -95,21 +137,29 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
                     </button>
                   ) : null
                 }
+                sectionExpanded={geotiffSectionExpanded}
+                onSectionCollapse={() => setExpandedHandle(null)}
               >
                 {geotiffGroups.map((group) => (
-                  <GeotiffGroupRow
-                    key={group.id}
-                    group={group}
-                    entries={geotiffs.filter((entry) => group.handles.includes(entry.handle))}
-                    surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
-                  />
+                  <div key={group.id} style={anyExpanded && expandedHandle !== group.id ? { display: 'none' } : undefined}>
+                    <GeotiffGroupRow
+                      group={group}
+                      entries={geotiffs.filter((entry) => group.handles.includes(entry.handle))}
+                      surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
+                      isExpanded={expandedHandle === group.id}
+                      onToggle={() => toggleExpand(group.id)}
+                    />
+                  </div>
                 ))}
                 {ungroupedGeotiffs.map((entry) => (
-                  <GeotiffRow
-                    key={entry.handle}
-                    entry={entry}
-                    surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
-                  />
+                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                    <GeotiffRow
+                      entry={entry}
+                      surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
+                      isExpanded={expandedHandle === entry.handle}
+                      onToggle={() => toggleExpand(entry.handle)}
+                    />
+                  </div>
                 ))}
               </DatasetSection>
             )}
@@ -123,25 +173,46 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
                     </button>
                   ) : null
                 }
+                sectionExpanded={pdfSectionExpanded}
+                onSectionCollapse={() => setExpandedHandle(null)}
               >
                 {pdfGroups.map((group) => (
-                  <PdfGroupRow
-                    key={group.id}
-                    group={group}
-                    entries={group.sheetIds
-                      .map((id) => pdfSheets.find((entry) => entry.handle === id))
-                      .filter((entry): entry is PdfSheetEntry => !!entry)}
-                  />
+                  <div key={group.id} style={anyExpanded && expandedHandle !== group.id ? { display: 'none' } : undefined}>
+                    <PdfGroupRow
+                      group={group}
+                      entries={group.sheetIds
+                        .map((id) => pdfSheets.find((entry) => entry.handle === id))
+                        .filter((entry): entry is PdfSheetEntry => !!entry)}
+                      isExpanded={expandedHandle === group.id}
+                      onToggle={() => toggleExpand(group.id)}
+                    />
+                  </div>
                 ))}
                 {ungroupedPdfSheets.map((entry) => (
-                  <PdfSheetRow key={entry.handle} entry={entry} />
+                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                    <PdfSheetRow
+                      entry={entry}
+                      isExpanded={expandedHandle === entry.handle}
+                      onToggle={() => toggleExpand(entry.handle)}
+                    />
+                  </div>
                 ))}
               </DatasetSection>
             )}
             {pointClouds.length > 0 && (
-              <DatasetSection title="Point Clouds">
+              <DatasetSection
+                title="Point Clouds"
+                sectionExpanded={pointCloudSectionExpanded}
+                onSectionCollapse={() => setExpandedHandle(null)}
+              >
                 {pointClouds.map((entry) => (
-                  <PointCloudRow key={entry.handle} entry={entry} />
+                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                    <PointCloudRow
+                      entry={entry}
+                      isExpanded={expandedHandle === entry.handle}
+                      onToggle={() => toggleExpand(entry.handle)}
+                    />
+                  </div>
                 ))}
               </DatasetSection>
             )}
