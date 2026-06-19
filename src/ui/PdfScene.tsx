@@ -354,26 +354,6 @@ function drawBorderCropSheetPx(
   ctx.stroke();
 }
 
-/** Trace the crop boundary in screen/canvas coordinates using a caller-supplied
- *  page-to-screen mapping function. Used for clipping in SingleSheetScene where
- *  the canvas is NOT pre-transformed into sheet-pixel space. */
-function traceBorderCropScreenPx(
-  ctx: CanvasRenderingContext2D,
-  crop: BorderCrop,
-  toScreen: (p: Point2) => Point2,
-): void {
-  const pts = cropPoints(crop);
-  if (pts.length < 2) return;
-  ctx.beginPath();
-  const p0 = toScreen(pts[0]!);
-  ctx.moveTo(p0.x, p0.y);
-  for (let i = 1; i < pts.length; i++) {
-    const p = toScreen(pts[i]!);
-    ctx.lineTo(p.x, p.y);
-  }
-  ctx.closePath();
-}
-
 function cropMidpoints(crop: BorderCrop): Array<Point2 & { insertIndex: number }> {
   const points = cropPoints(crop);
   const midpoints: Array<Point2 & { insertIndex: number }> = [];
@@ -724,7 +704,7 @@ export function PdfScene() {
   const directSheet = pdfSheets.find((entry) => entry.handle === activeHandle) ?? null;
   const group = pdfGroups.find((entry) => entry.id === activeHandle) ?? null;
   const groupSheets = useMemo(
-    () => group ? group.sheetIds.map((id) => pdfSheets.find((sheet) => sheet.handle === id)).filter((sheet): sheet is PdfSheetEntry => !!sheet) : [],
+    () => group ? group.sheetIds.map((id) => pdfSheets.find((sheet) => sheet.handle === id)).filter((sheet): sheet is PdfSheetEntry => !!sheet && sheet.visible) : [],
     [group, pdfSheets],
   );
 
@@ -1609,10 +1589,6 @@ function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 'calibr
             const scC = pageToScreen(sc);
             const headLen = 10;
             ctx.save();
-            if (sheet.borderCrop) {
-              traceBorderCropScreenPx(ctx, sheet.borderCrop, pageToScreen);
-              ctx.clip();
-            }
             ctx.strokeStyle = '#53c7c0';
             ctx.fillStyle = '#53c7c0';
             ctx.lineWidth = 2;
@@ -1649,10 +1625,6 @@ function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 'calibr
             const end = kdEndRef.current;
             const hover = kdHoverRef.current;
             ctx.save();
-            if (sheet.borderCrop) {
-              traceBorderCropScreenPx(ctx, sheet.borderCrop, pageToScreen);
-              ctx.clip();
-            }
             ctx.strokeStyle = '#f5a623';
             ctx.fillStyle = '#f5a623';
             ctx.lineWidth = 2;
@@ -1724,10 +1696,6 @@ function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 'calibr
           const tipSc = pageToScreen(tipPage);
           const radiusSc = NORTH_ARROW_RADIUS * zoom;
           ctx.save();
-          if (sheet.borderCrop) {
-            traceBorderCropScreenPx(ctx, sheet.borderCrop, pageToScreen);
-            ctx.clip();
-          }
           drawNorthArrow(ctx, centerSc, tipSc, d.color, radiusSc);
           ctx.restore();
 
