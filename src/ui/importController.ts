@@ -1128,6 +1128,14 @@ export function setPdfVisible(handle: string, on: boolean): void {
   engineHolder.current?.setPdfDisplay(handle, on, entry?.opacityPct ?? 100);
 }
 
+export function setPdfOpacity(handle: string, opacityPct: number): void {
+  store.getState().patchPdfSheet(handle, { opacityPct });
+  const entry = store.getState().pdfSheets.find((sheet) => sheet.handle === handle);
+  if (entry) {
+    engineHolder.current?.setPdfDisplay(handle, entry.visible, opacityPct);
+  }
+}
+
 function applyPdfGroupDefaultLayout(sheets: PdfSheetEntry[], group: PdfGroupEntry): void {
   const members = group.sheetIds
     .map((id) => sheets.find((sheet) => sheet.handle === id))
@@ -1160,7 +1168,7 @@ export function removePdfSheet(handle: string): void {
 export function createPdfGroup(label: string, handles: string[]): void {
   const state = store.getState();
   const members = state.pdfSheets.filter((sheet) => handles.includes(sheet.handle));
-  if (members.length < 2) return;
+  if (members.length === 0) return;
   const group: PdfGroupEntry = {
     id: `pdf-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     label,
@@ -1173,6 +1181,87 @@ export function createPdfGroup(label: string, handles: string[]): void {
   for (const sheet of nextMembers) {
     state.patchPdfSheet(sheet.handle, { groupId: group.id, flatOffsetPx: sheet.flatOffsetPx });
     engineHolder.current?.updatePdfSheet(sheet);
+  }
+}
+
+export function removeSheetFromGroup(handle: string): void {
+  const s0 = store.getState();
+  const sheet = s0.pdfSheets.find((s) => s.handle === handle);
+  if (!sheet || !sheet.groupId) return;
+  const group = s0.pdfGroups.find((g) => g.id === sheet.groupId);
+  if (!group) return;
+  const nextSheetIds = group.sheetIds.filter((id) => id !== handle);
+
+  if (nextSheetIds.length === 0) {
+    store.getState().patchPdfSheet(handle, { groupId: null, flatOffsetPx: { x: 0, y: 0 } });
+    store.getState().removePdfGroup(group.id);
+    const updated = store.getState().pdfSheets.find((s) => s.handle === handle);
+    if (updated) engineHolder.current?.updatePdfSheet(updated);
+    return;
+  }
+
+  const clones = s0.pdfSheets
+    .filter((s) => nextSheetIds.includes(s.handle))
+    .map((s) => ({ ...s }));
+  const updatedGroup: PdfGroupEntry = { ...group, sheetIds: nextSheetIds };
+  applyPdfGroupDefaultLayout(clones, updatedGroup);
+
+  store.getState().patchPdfSheet(handle, { groupId: null, flatOffsetPx: { x: 0, y: 0 } });
+  store.getState().reorderPdfGroupSheets(group.id, nextSheetIds);
+  for (const clone of clones) {
+    store.getState().patchPdfSheet(clone.handle, { flatOffsetPx: clone.flatOffsetPx });
+  }
+  for (const clone of clones) {
+    const fresh = store.getState().pdfSheets.find((s) => s.handle === clone.handle);
+    if (fresh) engineHolder.current?.updatePdfSheet(fresh);
+  }
+  const removed = store.getState().pdfSheets.find((s) => s.handle === handle);
+  if (removed) engineHolder.current?.updatePdfSheet(removed);
+}
+
+export function addSheetsToGroup(groupId: string, handles: string[]): void {
+  const s0 = store.getState();
+  const group0 = s0.pdfGroups.find((g) => g.id === groupId);
+  if (!group0 || handles.length === 0) return;
+
+  for (const h of handles) {
+    const sheet = s0.pdfSheets.find((s) => s.handle === h);
+    if (!sheet) continue;
+    if (sheet.groupId && sheet.groupId !== groupId) {
+      removeSheetFromGroup(h);
+    }
+  }
+
+  const s1 = store.getState();
+  const group = s1.pdfGroups.find((g) => g.id === groupId);
+  if (!group) return;
+  const clean: string[] = [];
+  for (const h of handles) {
+    if (!group.sheetIds.includes(h) && !clean.includes(h)) {
+      clean.push(h);
+    }
+  }
+  if (clean.length === 0) return;
+
+  const nextSheetIds = [...group.sheetIds, ...clean];
+  for (const h of clean) {
+    store.getState().patchPdfSheet(h, { groupId: group.id });
+  }
+
+  const s2 = store.getState();
+  const clones = s2.pdfSheets
+    .filter((s) => nextSheetIds.includes(s.handle))
+    .map((s) => ({ ...s }));
+  const updatedGroup: PdfGroupEntry = { ...group, sheetIds: nextSheetIds };
+  applyPdfGroupDefaultLayout(clones, updatedGroup);
+
+  store.getState().reorderPdfGroupSheets(group.id, nextSheetIds);
+  for (const clone of clones) {
+    store.getState().patchPdfSheet(clone.handle, { flatOffsetPx: clone.flatOffsetPx });
+  }
+  for (const clone of clones) {
+    const fresh = store.getState().pdfSheets.find((s) => s.handle === clone.handle);
+    if (fresh) engineHolder.current?.updatePdfSheet(fresh);
   }
 }
 

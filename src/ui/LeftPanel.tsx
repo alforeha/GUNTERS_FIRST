@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore, type PdfSheetEntry } from '../state/store';
 import { enqueueFiles } from './importController';
 import { DatasetSection } from './left-panel/DatasetSection';
@@ -17,6 +17,7 @@ import { PdfGroupModal } from './left-panel/modals/PdfGroupModal';
 import styles from './App.module.css';
 
 const ACCEPT = '.xml,.landxml,.dxf,.dwg,.tin,.tif,.tiff,.geotiff,.tfw,.pdf,.las';
+const PDF_TYPE_COLOR = '#d4380d';
 
 export function LeftPanel({ sizeClass }: { sizeClass: string }) {
   const open = useAppStore((s) => s.leftOpen);
@@ -37,6 +38,13 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
   const groupedPdfSheets = new Set(pdfGroups.flatMap((group) => group.sheetIds));
   const ungroupedPdfSheets = pdfSheets.filter((entry) => !groupedPdfSheets.has(entry.handle));
 
+  const ungroupedPdfDocs = new Map<string, PdfSheetEntry[]>();
+  for (const sheet of ungroupedPdfSheets) {
+    const list = ungroupedPdfDocs.get(sheet.fileId);
+    if (list) list.push(sheet);
+    else ungroupedPdfDocs.set(sheet.fileId, [sheet]);
+  }
+
   const toggleExpand = (handle: string) => {
     setExpandedHandle((prev) => (prev === handle ? null : handle));
   };
@@ -48,14 +56,42 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
   const geotiffGroupHandles = new Set(geotiffGroups.map((g) => g.id));
   const geotiffHandles = new Set(ungroupedGeotiffs.map((g) => g.handle));
   const pdfGroupHandles = new Set(pdfGroups.map((g) => g.id));
-  const pdfSheetHandles = new Set(ungroupedPdfSheets.map((s) => s.handle));
+  const pdfDocHandles = new Set([...ungroupedPdfDocs.values()].map((pages) => pages[0]!.handle));
   const pointCloudHandles = new Set(pointClouds.map((p) => p.handle));
 
   const surfaceSectionExpanded = anyExpanded && surfaceHandles.has(expandedHandle!);
   const dxfSectionExpanded = anyExpanded && dxfHandles.has(expandedHandle!);
   const geotiffSectionExpanded = anyExpanded && (geotiffGroupHandles.has(expandedHandle!) || geotiffHandles.has(expandedHandle!));
-  const pdfSectionExpanded = anyExpanded && (pdfGroupHandles.has(expandedHandle!) || pdfSheetHandles.has(expandedHandle!));
+  const pdfSectionExpanded = anyExpanded && (pdfGroupHandles.has(expandedHandle!) || pdfDocHandles.has(expandedHandle!));
   const pointCloudSectionExpanded = anyExpanded && pointCloudHandles.has(expandedHandle!);
+
+  const allValidExpandedHandles = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of surfaces) set.add(s.handle);
+    for (const d of dxfs) set.add(d.handle);
+    for (const g of geotiffGroups) set.add(g.id);
+    const geoGrouped = new Set(geotiffGroups.flatMap((g) => g.handles));
+    for (const g of geotiffs) {
+      if (!geoGrouped.has(g.handle)) set.add(g.handle);
+    }
+    for (const g of pdfGroups) set.add(g.id);
+    const pdfGrouped = new Set(pdfGroups.flatMap((g) => g.sheetIds));
+    const seenPdfFiles = new Set<string>();
+    for (const s of pdfSheets) {
+      if (!pdfGrouped.has(s.handle) && !seenPdfFiles.has(s.fileId)) {
+        set.add(s.handle);
+        seenPdfFiles.add(s.fileId);
+      }
+    }
+    for (const p of pointClouds) set.add(p.handle);
+    return set;
+  }, [surfaces, dxfs, geotiffGroups, geotiffs, pdfGroups, pdfSheets, pointClouds]);
+
+  useEffect(() => {
+    if (expandedHandle !== null && !allValidExpandedHandles.has(expandedHandle)) {
+      setExpandedHandle(null);
+    }
+  }, [expandedHandle, allValidExpandedHandles]);
 
   return (
     <aside
@@ -87,50 +123,55 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
         ) : (
           <>
             {surfaces.length > 0 && (
-              <DatasetSection
-                title="Surfaces"
-                sectionExpanded={surfaceSectionExpanded}
-                onSectionCollapse={() => setExpandedHandle(null)}
-              >
-                <div style={anyExpanded ? { display: 'none' } : undefined}>
-                  <SurfaceMasterBar />
-                </div>
-                {surfaces.map((entry) => (
-                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
-                    <SurfaceRow
-                      entry={entry}
-                      isExpanded={expandedHandle === entry.handle}
-                      onToggle={() => toggleExpand(entry.handle)}
-                    />
+              <div style={anyExpanded && !surfaceSectionExpanded ? { display: 'none' } : undefined}>
+                <DatasetSection
+                  title="Surfaces"
+                  sectionExpanded={surfaceSectionExpanded}
+                  onSectionCollapse={() => setExpandedHandle(null)}
+                >
+                  <div style={anyExpanded ? { display: 'none' } : undefined}>
+                    <SurfaceMasterBar />
                   </div>
-                ))}
-              </DatasetSection>
+                  {surfaces.map((entry) => (
+                    <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                      <SurfaceRow
+                        entry={entry}
+                        isExpanded={expandedHandle === entry.handle}
+                        onToggle={() => toggleExpand(entry.handle)}
+                      />
+                    </div>
+                  ))}
+                </DatasetSection>
+              </div>
             )}
             {dxfs.length > 0 && (
-              <DatasetSection
-                title="DXF Files"
-                sectionExpanded={dxfSectionExpanded}
-                onSectionCollapse={() => setExpandedHandle(null)}
-              >
-                <div style={anyExpanded ? { display: 'none' } : undefined}>
-                  <DxfMasterBar />
-                </div>
-                {dxfs.map((entry) => (
-                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
-                    <DxfRow
-                      entry={entry}
-                      surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
-                      isExpanded={expandedHandle === entry.handle}
-                      onToggle={() => toggleExpand(entry.handle)}
-                    />
+              <div style={anyExpanded && !dxfSectionExpanded ? { display: 'none' } : undefined}>
+                <DatasetSection
+                  title="DXF Files"
+                  sectionExpanded={dxfSectionExpanded}
+                  onSectionCollapse={() => setExpandedHandle(null)}
+                >
+                  <div style={anyExpanded ? { display: 'none' } : undefined}>
+                    <DxfMasterBar />
                   </div>
-                ))}
-              </DatasetSection>
+                  {dxfs.map((entry) => (
+                    <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                      <DxfRow
+                        entry={entry}
+                        surfaces={surfaces.map((surface) => ({ handle: surface.handle, name: surface.name }))}
+                        isExpanded={expandedHandle === entry.handle}
+                        onToggle={() => toggleExpand(entry.handle)}
+                      />
+                    </div>
+                  ))}
+                </DatasetSection>
+              </div>
             )}
             {geotiffs.length > 0 && (
-              <DatasetSection
-                title="GeoTIFFs"
-                action={
+              <div style={anyExpanded && !geotiffSectionExpanded ? { display: 'none' } : undefined}>
+                <DatasetSection
+                  title="GeoTIFFs"
+                  action={
                   geotiffs.length >= 2 ? (
                     <button type="button" className={styles.sectionActionBtn} onClick={() => setBatchOpen(true)}>
                       Batch
@@ -162,11 +203,13 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
                   </div>
                 ))}
               </DatasetSection>
+              </div>
             )}
             {pdfSheets.length > 0 && (
-              <DatasetSection
-                title="PDFs"
-                action={
+              <div style={anyExpanded && !pdfSectionExpanded ? { display: 'none' } : undefined}>
+                <DatasetSection
+                  title="PDFs"
+                  action={
                   ungroupedPdfSheets.length >= 2 ? (
                     <button type="button" className={styles.sectionActionBtn} onClick={() => setPdfGroupOpen(true)}>
                       Group
@@ -175,6 +218,7 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
                 }
                 sectionExpanded={pdfSectionExpanded}
                 onSectionCollapse={() => setExpandedHandle(null)}
+                sectionColor={PDF_TYPE_COLOR}
               >
                 {pdfGroups.map((group) => (
                   <div key={group.id} style={anyExpanded && expandedHandle !== group.id ? { display: 'none' } : undefined}>
@@ -185,36 +229,45 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
                         .filter((entry): entry is PdfSheetEntry => !!entry)}
                       isExpanded={expandedHandle === group.id}
                       onToggle={() => toggleExpand(group.id)}
+                      sectionColor={PDF_TYPE_COLOR}
                     />
                   </div>
                 ))}
-                {ungroupedPdfSheets.map((entry) => (
-                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
-                    <PdfSheetRow
-                      entry={entry}
-                      isExpanded={expandedHandle === entry.handle}
-                      onToggle={() => toggleExpand(entry.handle)}
-                    />
-                  </div>
-                ))}
+                {[...ungroupedPdfDocs.values()].map((pages) => {
+                  const docHandle = pages[0]!.handle;
+                  return (
+                    <div key={docHandle} style={anyExpanded && expandedHandle !== docHandle ? { display: 'none' } : undefined}>
+                      <PdfSheetRow
+                        entry={pages[0]!}
+                        pages={pages}
+                        isExpanded={expandedHandle === docHandle}
+                        onToggle={() => toggleExpand(docHandle)}
+                        sectionColor={PDF_TYPE_COLOR}
+                      />
+                    </div>
+                  );
+                })}
               </DatasetSection>
+              </div>
             )}
             {pointClouds.length > 0 && (
-              <DatasetSection
-                title="Point Clouds"
-                sectionExpanded={pointCloudSectionExpanded}
-                onSectionCollapse={() => setExpandedHandle(null)}
-              >
-                {pointClouds.map((entry) => (
-                  <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
-                    <PointCloudRow
-                      entry={entry}
-                      isExpanded={expandedHandle === entry.handle}
-                      onToggle={() => toggleExpand(entry.handle)}
-                    />
-                  </div>
-                ))}
-              </DatasetSection>
+              <div style={anyExpanded && !pointCloudSectionExpanded ? { display: 'none' } : undefined}>
+                <DatasetSection
+                  title="Point Clouds"
+                  sectionExpanded={pointCloudSectionExpanded}
+                  onSectionCollapse={() => setExpandedHandle(null)}
+                >
+                  {pointClouds.map((entry) => (
+                    <div key={entry.handle} style={anyExpanded && expandedHandle !== entry.handle ? { display: 'none' } : undefined}>
+                      <PointCloudRow
+                        entry={entry}
+                        isExpanded={expandedHandle === entry.handle}
+                        onToggle={() => toggleExpand(entry.handle)}
+                      />
+                    </div>
+                  ))}
+                </DatasetSection>
+              </div>
             )}
           </>
         )}

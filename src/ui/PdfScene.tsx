@@ -296,6 +296,7 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext('2d');
         if (canvas && ctx) {
+          ctx.globalAlpha = sheet.opacityPct / 100;
           if (canvas.width !== sheet.widthPx150) canvas.width = sheet.widthPx150;
           if (canvas.height !== sheet.heightPx150) canvas.height = sheet.heightPx150;
           if (cropActive) {
@@ -371,7 +372,7 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
       };
       draw();
       return () => window.cancelAnimationFrame(raf);
-    }, [cropActive, loadingState, sheet.borderCrop, sheet.heightPx150, sheet.knownDistance, sheet.northArrow, sheet.scaleBar, sheet.widthPx150, status, tilesRef]);
+    }, [cropActive, loadingState, sheet.borderCrop, sheet.heightPx150, sheet.knownDistance, sheet.northArrow, sheet.opacityPct, sheet.scaleBar, sheet.widthPx150, status, tilesRef]);
 
     return <canvas ref={canvasRef} width={sheet.widthPx150} height={sheet.heightPx150} />;
   },

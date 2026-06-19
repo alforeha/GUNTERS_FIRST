@@ -198,6 +198,7 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (canvas && ctx) {
+        ctx.globalAlpha = sheet.opacityPct / 100;
         const dpr = window.devicePixelRatio;
         const w = canvas.width / dpr;
         const h = canvas.height / dpr;
@@ -358,7 +359,7 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
     };
     draw();
     return () => window.cancelAnimationFrame(raf);
-  }, [kind, pageToScreen, pan, sheet.heightPx150, sheet.widthPx150, tilesRef, toolMode, zoom]);
+  }, [kind, pageToScreen, pan, sheet.heightPx150, sheet.opacityPct, sheet.widthPx150, tilesRef, toolMode, zoom]);
 
   function commitScaleBar(): void {
     const ft = Number(sbFtInput);

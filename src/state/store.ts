@@ -388,6 +388,7 @@ interface AppState {
   patchPdfSheet: (handle: string, patch: Partial<Omit<PdfSheetEntry, 'handle'>>) => void;
   patchPdfGroup: (id: string, patch: Partial<Omit<PdfGroupEntry, 'id' | 'sheetIds'>>) => void;
   reorderPdfGroupSheets: (groupId: string, nextSheetIds: string[]) => void;
+  removePdfGroup: (id: string) => void;
   pointClouds: PointCloudEntry[];
   addPointCloudEntry: (entry: PointCloudEntry, note?: ImportNote) => void;
   removePointCloudEntry: (handle: string) => void;
@@ -714,6 +715,10 @@ export const useAppStore = create<AppState>()(
         pdfGroups: s.pdfGroups.map((group) =>
           group.id === groupId ? { ...group, sheetIds: nextSheetIds } : group,
         ),
+      })),
+    removePdfGroup: (id) =>
+      set((s) => ({
+        pdfGroups: s.pdfGroups.filter((group) => group.id !== id),
       })),
     pointClouds: [],
     addPointCloudEntry: (entry, note) =>

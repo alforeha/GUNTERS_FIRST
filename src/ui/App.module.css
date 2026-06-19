@@ -644,8 +644,8 @@
 .sectionCollapseBtn {
   position: absolute;
   left: 50%;
-  bottom: -10px;
-  transform: translateX(-50%);
+  bottom: 0;
+  transform: translate(-50%, 50%);
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -1029,6 +1029,34 @@
 .elemChipOff {
   color: var(--text-dim);
   opacity: 0.55;
+  text-decoration: line-through;
+}
+
+/* ── type pill (colored left visibility toggle, shared across dataset types) ── */
+
+.typePill {
+  flex: none;
+  min-width: 36px;
+  height: 22px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.typePillPdf {
+  background: #d4380d;
+}
+
+.typePillOff {
+  background: var(--border);
+  color: var(--text-dim);
   text-decoration: line-through;
 }
 
