@@ -122,6 +122,9 @@ export class ViewerEngine {
   private statsCb: FrameStatsCallback | null = null;
   private labelStatusCb: LabelStatusCallback | null = null;
   private zoomCb: ZoomChangeCallback | null = null;
+  private hoverHeightCb: ((h: number) => void) | null = null;
+  private hoverSpeedCb: ((s: number) => void) | null = null;
+  private exitHoverCb: (() => void) | null = null;
   private lastFrameTime = 0;
   private labelRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private lastOrbitDirection = new THREE.Vector3(0.45, -0.65, -0.35).normalize();
@@ -132,6 +135,7 @@ export class ViewerEngine {
   private hoverPitch = THREE.MathUtils.degToRad(-5);
   private hoverKeys = new Set<string>();
   private hoverLookDragging = false;
+  private zoomSensitivity3D = 1.0;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -164,15 +168,19 @@ export class ViewerEngine {
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
     this.setSun(DEFAULT_SUN.azimuth, DEFAULT_SUN.altitude);
 
+    // ITEM33: intercept wheel before OrbitControls so we own the dolly step.
+    // Must be added BEFORE OrbitControls ctor so stopImmediatePropagation works.
+    this.renderer.domElement.addEventListener('wheel', this.handleWheel, { passive: false });
+
     // Damping intentionally OFF: render-on-demand only (battery matters for field laptops).
     this.orbitControls = new OrbitControls(this.perspCamera, this.renderer.domElement);
     this.orbitControls.enableDamping = false;
-    // Close-zoom fix (07 Phase 2): dolly toward the cursor point (distance-adaptive by
-    // construction — OrbitControls dolly is multiplicative on camera→point distance) and a
-    // minDistance small enough for ~1 ft inspection. Near/far follow in updateClipPlanes().
+    // ITEM33: fly-through dolly — minDistance removed; target pushed forward when
+    // camera approaches within FLY_THRESHOLD. Wheel intercepted before OrbitControls
+    // so the step is sensitivity-driven and pre-clamp (no 1-frame flicker).
     this.orbitControls.zoomToCursor = true;
-    this.orbitControls.minDistance = 0.3;
-    this.orbitControls.addEventListener('change', this.requestRender);
+    this.orbitControls.minDistance = 0;
+    this.orbitControls.addEventListener('change', this.handleOrbitChange);
     this.orbitControls.addEventListener('start', this.handleControlsStart);
     this.orbitControls.addEventListener('end', this.handleControlsEnd);
 
@@ -216,6 +224,7 @@ export class ViewerEngine {
     el.removeEventListener('pointerleave', this.handlePointerLeave);
     el.removeEventListener('pointerdown', this.handlePointerDown);
     el.removeEventListener('pointerup', this.handlePointerUp);
+    el.removeEventListener('wheel', this.handleWheel);
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     this.resizeObserver.disconnect();
@@ -288,7 +297,7 @@ export class ViewerEngine {
     const hit = this.pickActiveSurfaceAtPointer();
     if (!hit) return false;
     if (this.mode === 'orbit') this.rememberOrbitView();
-    this.hoverHeight = Math.max(height, 0);
+    this.hoverHeight = height;
     const dir = new THREE.Vector3();
     this.activeCamera.getWorldDirection(dir);
     dir.z = 0;
@@ -751,6 +760,7 @@ export class ViewerEngine {
       const dir = this.activeCamera.position.clone().sub(this.orbitControls.target).normalize();
       this.perspCamera.position.copy(this.orbitControls.target).addScaledVector(dir, distance);
       this.orbitControls.update();
+      this.applyFlyThroughDolly();
       this.rememberOrbitView();
     }
     this.emitZoomChanged();
@@ -759,12 +769,16 @@ export class ViewerEngine {
   }
 
   setHoverHeight(height: number): void {
-    this.hoverHeight = Math.max(height, 0);
+    this.hoverHeight = Math.max(height, -1000);
     if (this.mode === 'hover') this.snapHoverCameraToSurface();
   }
 
   setHoverSpeed(speed: number): void {
     this.hoverSpeed = Math.max(speed, 0.1);
+  }
+
+  setZoomSensitivity3D(sensitivity: number): void {
+    this.zoomSensitivity3D = THREE.MathUtils.clamp(sensitivity, 0.1, 20);
   }
 
   /** Active surface drives the cursor readout target (C3). null = readout from any surface. */
@@ -797,6 +811,18 @@ export class ViewerEngine {
   onZoomChange(cb: ZoomChangeCallback): void {
     this.zoomCb = cb;
     cb(this.currentZoomNormalized());
+  }
+
+  onHoverHeightChange(cb: (h: number) => void): void {
+    this.hoverHeightCb = cb;
+  }
+
+  onHoverSpeedChange(cb: (s: number) => void): void {
+    this.hoverSpeedCb = cb;
+  }
+
+  onRequestExitHover(cb: () => void): void {
+    this.exitHoverCb = cb;
   }
 
   onEditSelection(cb: EditSelectionCallback): void {
@@ -974,6 +1000,76 @@ export class ViewerEngine {
 
   private emitZoomChanged(): void {
     this.zoomCb?.(this.currentZoomNormalized());
+  }
+
+  // ── ITEM33: fly-through dolly (orbit mode only) ─────────────────────────
+
+  private static readonly FLY_THRESHOLD = 0.1;
+  private static readonly FLY_PUSH = 0.15;
+
+  /** OrbitControls 'change' handler — post-correct target distance if camera
+   *  crept too close (belt-and-suspenders: wheel interception is the primary
+   *  pre-clamp; this catches any edge case from pan/rotate). */
+  private handleOrbitChange = (): void => {
+    this.applyFlyThroughDolly();
+    this.requestRender();
+  };
+
+  /** If camera is within FLY_THRESHOLD of the orbit target, push the target
+   *  forward so the camera never sits at or behind it. This enables fly-through
+   *  zoom without the old minDistance wall. */
+  private applyFlyThroughDolly(): void {
+    if (this.mode !== 'orbit' || this.disposed) return;
+    const dist = this.perspCamera.position.distanceTo(this.orbitControls.target);
+    if (dist >= ViewerEngine.FLY_THRESHOLD) return;
+    const forward = this.orbitControls.target.clone().sub(this.perspCamera.position).normalize();
+    this.orbitControls.target.addScaledVector(forward, ViewerEngine.FLY_PUSH);
+    this.orbitControls.update();
+  }
+
+  /** Wheel event handler — fires BEFORE OrbitControls' own listener so we can
+   *  stopImmediatePropagation() and take over dolly in orbit mode.
+   *  Top mode passes through; hover mode adjusts speed. */
+  private handleWheel = (ev: WheelEvent): void => {
+    if (this.mode === 'hover') {
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      const delta = -ev.deltaY * 0.5;
+      this.hoverSpeed = Math.max(this.hoverSpeed + delta, 0.1);
+      this.hoverSpeedCb?.(this.hoverSpeed);
+      return;
+    }
+    if (this.mode === 'top') return; // topControls owns its own wheel
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    const step = this.computeOrbitDollyStep(ev.deltaY);
+    this.applyOrbitDolly(step);
+  };
+
+  /** Sensitivity-driven per-tick step: blends a constant floor (driven by
+   *  zoomSensitivity3D) with a distance-proportional component so zoom is
+   *  even at close range but still snappy at long distances.
+   *  deltaY < 0 = scroll up = zoom IN. */
+  private computeOrbitDollyStep(deltaY: number): number {
+    const currentDist = this.perspCamera.position.distanceTo(this.orbitControls.target);
+    const proportional = currentDist * 0.05;
+    const constant = this.zoomSensitivity3D * 2.0;
+    const magnitude = Math.max(constant, proportional);
+    return magnitude * (deltaY > 0 ? -1 : 1);
+  }
+
+  /** Move camera AND orbit target forward (positive step) or backward along
+   *  the current view direction. Preserves spherical coords via update(). */
+  private applyOrbitDolly(step: number): void {
+    const forward = this.orbitControls.target.clone().sub(this.perspCamera.position).normalize();
+    const move = forward.clone().multiplyScalar(step);
+    this.perspCamera.position.add(move);
+    this.orbitControls.target.add(move);
+    this.orbitControls.update();
+    this.rememberOrbitView();
+    this.emitZoomChanged();
+    this.scheduleLabelRefresh();
+    this.requestRender();
   }
 
   private rememberOrbitView(): void {
@@ -1166,6 +1262,25 @@ export class ViewerEngine {
 
   private handleKeyDown = (ev: KeyboardEvent): void => {
     if (this.mode !== 'hover') return;
+    if (ev.code === 'KeyX') {
+      ev.preventDefault();
+      this.exitHoverCb?.();
+      return;
+    }
+    if (ev.code === 'KeyQ') {
+      ev.preventDefault();
+      this.hoverHeight -= 1.0;
+      this.hoverHeightCb?.(this.hoverHeight);
+      this.snapHoverCameraToSurface();
+      return;
+    }
+    if (ev.code === 'KeyE') {
+      ev.preventDefault();
+      this.hoverHeight += 1.0;
+      this.hoverHeightCb?.(this.hoverHeight);
+      this.snapHoverCameraToSurface();
+      return;
+    }
     if (!['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(ev.code)) return;
     ev.preventDefault();
     this.hoverKeys.add(ev.code);

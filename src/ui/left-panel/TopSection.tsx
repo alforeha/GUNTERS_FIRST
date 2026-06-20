@@ -1,13 +1,8 @@
 import { useAppStore } from '../../state/store';
 import { setExaggeration, setSun } from '../importController';
-import { engineHolder } from '../engineHolder';
 import styles from '../App.module.css';
 
 export function TopSection({ onOpenClick }: { onOpenClick: () => void }) {
-  const cameraMode = useAppStore((s) => s.cameraMode);
-  const setCameraMode = useAppStore((s) => s.setCameraMode);
-  const hoverArmed = useAppStore((s) => s.hoverArmed);
-  const setHoverArmed = useAppStore((s) => s.setHoverArmed);
   const exaggeration = useAppStore((s) => s.exaggeration);
   const sunAzimuth = useAppStore((s) => s.sunAzimuth);
   const sunAltitude = useAppStore((s) => s.sunAltitude);
@@ -17,48 +12,6 @@ export function TopSection({ onOpenClick }: { onOpenClick: () => void }) {
       <div className={styles.topRow}>
         <button type="button" className={styles.actionBtn} onClick={onOpenClick}>
           Open...
-        </button>
-        <span className={styles.segmented}>
-          <button
-            type="button"
-            className={`${styles.segmentedBtn} ${cameraMode === 'orbit' ? styles.segmentedBtnActive : ''}`}
-            onClick={() => {
-              setHoverArmed(false);
-              setCameraMode('orbit');
-            }}
-          >
-            3D
-          </button>
-          <button
-            type="button"
-            className={`${styles.segmentedBtn} ${cameraMode === 'top' ? styles.segmentedBtnActive : ''}`}
-            onClick={() => {
-              setHoverArmed(false);
-              setCameraMode('top');
-            }}
-          >
-            Top
-          </button>
-          <button
-            type="button"
-            className={`${styles.segmentedBtn} ${
-              cameraMode === 'hover' || hoverArmed ? styles.segmentedBtnActive : ''
-            }`}
-            onClick={() => {
-              if (cameraMode === 'hover') return;
-              setHoverArmed(!hoverArmed);
-            }}
-            title={hoverArmed ? 'Click the active surface in the canvas to enter hover mode' : 'Arm hover mode entry'}
-          >
-            Hover
-          </button>
-        </span>
-        <button
-          type="button"
-          className={styles.actionBtn}
-          onClick={() => engineHolder.current?.resetView()}
-        >
-          Reset view
         </button>
       </div>
       <div className={styles.sliderRow}>

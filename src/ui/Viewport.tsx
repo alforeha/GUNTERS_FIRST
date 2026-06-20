@@ -290,76 +290,163 @@ function EditCallout() {
   );
 }
 
-function ViewportHud({
-  zoomNormalized,
-  onZoomChange,
-}: {
-  zoomNormalized: number;
-  onZoomChange: (normalized: number) => void;
-}) {
+// ── ITEM34: bottom-left mode controls overlay ──────────────────────────
+
+function CanvasModeControls() {
+  const hasContent = useAppStore(
+    (s) => s.surfaces.length > 0 || s.dxfs.length > 0 || s.geotiffs.length > 0 || s.pdfSheets.length > 0 || s.pointClouds.length > 0,
+  );
+  const hasSurface = useAppStore((s) => s.surfaces.length > 0);
   const cameraMode = useAppStore((s) => s.cameraMode);
+  const setCameraMode = useAppStore((s) => s.setCameraMode);
   const hoverArmed = useAppStore((s) => s.hoverArmed);
+  const setHoverArmed = useAppStore((s) => s.setHoverArmed);
+  const zoomSensitivity3D = useAppStore((s) => s.zoomSensitivity3D);
+  const setZoomSensitivity3D = useAppStore((s) => s.setZoomSensitivity3D);
   const hoverHeight = useAppStore((s) => s.hoverHeight);
-  const hoverSpeed = useAppStore((s) => s.hoverSpeed);
   const setHoverHeight = useAppStore((s) => s.setHoverHeight);
+  const hoverSpeed = useAppStore((s) => s.hoverSpeed);
   const setHoverSpeed = useAppStore((s) => s.setHoverSpeed);
+  const [topZoom, setTopZoom] = useState(50); // 0-100, local-only for TOP zoom slider
+
+  if (!hasContent) return null;
 
   return (
-    <>
-      {hoverArmed && cameraMode !== 'hover' && (
-        <div className={styles.hoverHint}>Click the active surface to enter hover mode.</div>
-      )}
-      <div className={styles.viewportHud}>
-        {cameraMode !== 'hover' ? (
-          <label className={styles.viewportHudBlock}>
-            <span className={styles.viewportHudLabel}>Zoom</span>
-            <span className={styles.viewportHudRow}>
+    <div className={styles.canvasModeBar}>
+      {cameraMode !== 'hover' ? (
+        <div className={styles.canvasModeContext}>
+          {cameraMode === 'top' ? (
+            <label className={styles.canvasModeContextLabel}>
+              <span className={styles.canvasModeContextTitle}>Zoom</span>
               <input
                 type="range"
                 min={0}
                 max={100}
                 step={1}
-                value={Math.round(zoomNormalized * 100)}
-                onChange={(ev) => onZoomChange(Number(ev.target.value) / 100)}
+                value={topZoom}
+                onChange={(ev) => {
+                  const v = Number(ev.target.value);
+                  setTopZoom(v);
+                  engineHolder.current?.setZoomNormalized(v / 100);
+                }}
               />
-            </span>
-          </label>
-        ) : (
-          <>
-            <label className={styles.viewportHudBlock}>
-              <span className={styles.viewportHudLabel}>Hover Height (ft)</span>
+            </label>
+          ) : (
+            <label className={styles.canvasModeContextLabel}>
+              <span className={styles.canvasModeContextTitle}>Sensitivity</span>
+              <input
+                type="range"
+                min={1}
+                max={200}
+                step={1}
+                value={Math.round(zoomSensitivity3D * 10)}
+                onChange={(ev) => setZoomSensitivity3D(Number(ev.target.value) / 10)}
+              />
+              <span className={styles.canvasModeContextValue}>{zoomSensitivity3D.toFixed(1)}</span>
+            </label>
+          )}
+        </div>
+      ) : (
+        <div className={styles.canvasModeContext}>
+          <div className={styles.canvasModeHoverRow}>
+            <label className={styles.canvasModeHoverField}>
+              <span className={styles.canvasModeContextTitle}>Height</span>
               <input
                 type="number"
-                min={0}
-                step={0.1}
+                min={-1000}
+                step={1}
                 className={styles.viewportHudInput}
                 value={hoverHeight}
                 onChange={(ev) => {
                   const next = Number(ev.target.value);
-                  if (Number.isFinite(next) && next >= 0) setHoverHeight(next);
+                  if (Number.isFinite(next)) setHoverHeight(next);
                 }}
               />
             </label>
-            <label className={styles.viewportHudBlock}>
-              <span className={styles.viewportHudLabel}>Hover Speed</span>
+            <label className={styles.canvasModeHoverField}>
+              <span className={styles.canvasModeContextTitle}>Speed</span>
               <input
-                type="range"
-                min={1}
-                max={40}
-                step={1}
+                type="number"
+                min={0.1}
+                step={0.5}
+                className={styles.viewportHudInput}
                 value={hoverSpeed}
                 onChange={(ev) => {
                   const next = Number(ev.target.value);
-                  if (Number.isFinite(next) && next > 0) setHoverSpeed(next);
+                  if (Number.isFinite(next) && next >= 0.1) setHoverSpeed(next);
                 }}
               />
-              <span className={styles.viewportHudValue}>{hoverSpeed.toFixed(0)}</span>
             </label>
-          </>
-        )}
+          </div>
+        </div>
+      )}
+      <div className={styles.canvasModeRow}>
+        <span className={styles.segmented}>
+          <button
+            type="button"
+            className={`${styles.segmentedBtn} ${cameraMode === 'orbit' ? styles.segmentedBtnActive : ''}`}
+            onClick={() => {
+              setHoverArmed(false);
+              setCameraMode('orbit');
+            }}
+          >
+            3D
+          </button>
+          <button
+            type="button"
+            className={`${styles.segmentedBtn} ${cameraMode === 'top' ? styles.segmentedBtnActive : ''}`}
+            onClick={() => {
+              setHoverArmed(false);
+              setCameraMode('top');
+            }}
+          >
+            Top
+          </button>
+          {hasSurface ? (
+            <button
+              type="button"
+              className={`${styles.segmentedBtn} ${
+                cameraMode === 'hover' || hoverArmed ? styles.segmentedBtnActive : ''
+              }`}
+              onClick={() => {
+                if (cameraMode === 'hover') return;
+                setHoverArmed(!hoverArmed);
+              }}
+              title={hoverArmed ? 'Click the active surface in the canvas to enter hover mode' : 'Arm hover mode entry'}
+            >
+              Hover
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={styles.segmentedBtn}
+              disabled
+              title="Load a surface to enable hover mode"
+            >
+              Hover
+            </button>
+          )}
+        </span>
+        <button
+          type="button"
+          className={styles.actionBtn}
+          onClick={() => engineHolder.current?.resetView()}
+        >
+          Reset view
+        </button>
       </div>
-    </>
+    </div>
   );
+}
+
+function ViewportHud() {
+  const hoverArmed = useAppStore((s) => s.hoverArmed);
+  const cameraMode = useAppStore((s) => s.cameraMode);
+
+  if (hoverArmed && cameraMode !== 'hover') {
+    return <div className={styles.hoverHint}>Click the active surface to enter hover mode.</div>;
+  }
+  return null;
 }
 
 export function Viewport() {
@@ -369,7 +456,6 @@ export function Viewport() {
   );
   const sceneMode = useAppStore((s) => s.sceneMode);
   const editSurfaceHandle = useAppStore((s) => s.editSurfaceHandle);
-  const [zoomNormalized, setZoomNormalized] = useState(0.5);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -395,7 +481,9 @@ export function Viewport() {
     engine.onCursorPosition((pos) => store.getState().setCursor(pos));
     engine.onNorthClick(() => store.getState().setCameraMode('top'));
     engine.onLabelStatus((note) => store.getState().setLabelNote(note));
-    engine.onZoomChange((normalized) => setZoomNormalized(normalized));
+    engine.onHoverHeightChange((h) => store.getState().setHoverHeight(h));
+    engine.onHoverSpeedChange((s) => store.getState().setHoverSpeed(s));
+    engine.onRequestExitHover(() => store.getState().setCameraMode('orbit'));
     engine.onEditSelection((selection) => store.getState().setEditSelection(selection));
     engine.onEditDragState((dragging) => store.getState().setEditDragging(dragging));
     engine.onEditMessage((message) => store.getState().setEditMessage(message));
@@ -422,6 +510,10 @@ export function Viewport() {
       (s) => s.editTool,
       (tool) => engine.setEditTool(tool),
     );
+    const unsubSensitivity = store.subscribe(
+      (s) => s.zoomSensitivity3D,
+      (s) => engine.setZoomSensitivity3D(s),
+    );
 
     const onClick = (ev: MouseEvent) => {
       const state = store.getState();
@@ -436,6 +528,7 @@ export function Viewport() {
     container.addEventListener('click', onClick);
     engine.setHoverHeight(store.getState().hoverHeight);
     engine.setHoverSpeed(store.getState().hoverSpeed);
+    engine.setZoomSensitivity3D(store.getState().zoomSensitivity3D);
 
     let timer: number | undefined;
     const vertexTarget = readTestMeshParam();
@@ -458,6 +551,7 @@ export function Viewport() {
       unsubMode();
       unsubHoverHeight();
       unsubHoverSpeed();
+      unsubSensitivity();
       unsubTool();
       container.removeEventListener('click', onClick);
       engineHolder.current = null;
@@ -472,10 +566,8 @@ export function Viewport() {
       ) : (
         <>
           {!hasContent && <EmptyState />}
-          <ViewportHud
-            zoomNormalized={zoomNormalized}
-            onZoomChange={(normalized) => engineHolder.current?.setZoomNormalized(normalized)}
-          />
+          <CanvasModeControls />
+          <ViewportHud />
           <EditCanvasToolbar />
           <EditCallout />
         </>

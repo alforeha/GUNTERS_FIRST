@@ -355,6 +355,8 @@ interface AppState {
   setHoverHeight: (height: number) => void;
   hoverSpeed: number;
   setHoverSpeed: (speed: number) => void;
+  zoomSensitivity3D: number;
+  setZoomSensitivity3D: (s: number) => void;
 
   // scene controls (07 Phase 2/3)
   exaggeration: number; // 1–10×, Z-scale matrix in the engine
@@ -485,6 +487,8 @@ export const useAppStore = create<AppState>()(
     setHoverHeight: (height) => set({ hoverHeight: height }),
     hoverSpeed: 15,
     setHoverSpeed: (speed) => set({ hoverSpeed: speed }),
+    zoomSensitivity3D: 1.0,
+    setZoomSensitivity3D: (s) => set({ zoomSensitivity3D: Math.min(20, Math.max(0.1, s)) }),
 
     exaggeration: 1,
     setExaggeration: (k) => set({ exaggeration: k }),
