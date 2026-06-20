@@ -23,6 +23,8 @@ import {
   drawLoadingOverlay,
   drawNorthArrow,
   usePdfTileCache,
+  defaultRectCrop,
+  drawBorderCropSheetPx,
 } from './pdfSceneShared';
 import styles from './App.module.css';
 
@@ -218,6 +220,15 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
         if (loadingStateRef.current !== 'ready') {
           drawLoadingOverlay(ctx, 0, 0, sheet.widthPx150, sheet.heightPx150, statusRef.current);
         }
+        if (sheet.edgeVisible) {
+          ctx.save();
+          ctx.globalAlpha *= (sheet.markupOpacity ?? 1);
+          const boundary = sheet.borderCrop ?? defaultRectCrop(sheet);
+          ctx.strokeStyle = sheet.edgeColor ?? sheet.markupColor ?? '#d4380d';
+          ctx.lineWidth = 8;
+          drawBorderCropSheetPx(ctx, boundary);
+          ctx.restore();
+        }
         ctx.restore();
 
         if (kind === 'calibrate') {
@@ -367,7 +378,7 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
     };
     draw();
     return () => window.cancelAnimationFrame(raf);
-  }, [kind, pageToScreen, pan, sheet.heightPx150, sheet.opacityPct, sheet.widthPx150, tilesRef, toolMode, zoom]);
+  }, [kind, pageToScreen, pan, sheet.edgeColor, sheet.edgeVisible, sheet.heightPx150, sheet.markupOpacity, sheet.opacityPct, sheet.widthPx150, tilesRef, toolMode, zoom]);
 
   function commitScaleBar(): void {
     const ft = Number(sbFtInput);

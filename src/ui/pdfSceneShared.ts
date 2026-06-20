@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type PdfSheetEntry } from '../state/store';
+import type { BorderCrop, CropRect } from '../core/contract';
 import type { PdfDecodeTileRequest, PdfOpenRequest, PdfWorkerMessage } from '../workers/pdf.worker';
 import { getPdfSourceFile } from './importController';
 
@@ -163,6 +164,46 @@ export function drawNorthArrow(
   ctx.fill();
 
   ctx.restore();
+}
+
+export function defaultRectCrop(sheet: Pick<PdfSheetEntry, 'widthPx150' | 'heightPx150'>): CropRect {
+  return { kind: 'rect', x: 0, y: 0, width: sheet.widthPx150, height: sheet.heightPx150 };
+}
+
+export function cropPoints(crop: BorderCrop): Point2[] {
+  if (crop.kind === 'polygon') return crop.points.map(([x, y]) => ({ x, y }));
+  return [
+    { x: crop.x, y: crop.y },
+    { x: crop.x + crop.width, y: crop.y },
+    { x: crop.x + crop.width, y: crop.y + crop.height },
+    { x: crop.x, y: crop.y + crop.height },
+  ];
+}
+
+export function traceBorderCropSheetPx(
+  ctx: CanvasRenderingContext2D,
+  crop: BorderCrop,
+): void {
+  ctx.beginPath();
+  if (crop.kind === 'rect') {
+    ctx.rect(crop.x, crop.y, crop.width, crop.height);
+    return;
+  }
+  const points = cropPoints(crop);
+  if (points.length < 2) return;
+  ctx.moveTo(points[0]!.x, points[0]!.y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i]!.x, points[i]!.y);
+  }
+  ctx.closePath();
+}
+
+export function drawBorderCropSheetPx(
+  ctx: CanvasRenderingContext2D,
+  crop: BorderCrop,
+): void {
+  traceBorderCropSheetPx(ctx, crop);
+  ctx.stroke();
 }
 
 export function usePdfTileCache(sheet: PdfSheetEntry) {

@@ -668,6 +668,8 @@ export function confirmPdfImport(): void {
       knownDistance: null,
       markupOpacity: 1,
       markupColor: '#d4380d',
+      edgeVisible: false,
+      edgeColor: '#d4380d',
       borderCrop: null,
       blockOuts: [],
       markups: [],
@@ -1340,6 +1342,18 @@ export function setKnownDistance(handle: string, knownDistance: PdfKnownDistance
   store.getState().patchPdfSheet(handle, { knownDistance });
   const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
   if (sheet) engineHolder.current?.updatePdfSheet(sheet);
+}
+
+export function setEdge(handle: string, patch: { visible?: boolean; color?: string }): void {
+  const state = store.getState();
+  const sheet = state.pdfSheets.find((item) => item.handle === handle);
+  if (!sheet) return;
+  state.patchPdfSheet(handle, {
+    edgeVisible: patch.visible ?? sheet.edgeVisible,
+    edgeColor: patch.color ?? sheet.edgeColor,
+  });
+  const updated = state.pdfSheets.find((item) => item.handle === handle);
+  if (updated) engineHolder.current?.updatePdfSheet(updated);
 }
 
 export function setPdfFlatOffset(handle: string, flatOffsetPx: { x: number; y: number }): void {

@@ -1,7 +1,7 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import { useAppStore, type PdfSheetEntry } from '../state/store';
 import { DEFAULT_PIXELS_PER_FOOT, pixelsPerFootForSheet } from '../viewer/RenderPdf';
-import type { BorderCrop, CropRect, PdfScaleBar, PdfKnownDistance } from '../core/contract';
+import type { BorderCrop, PdfScaleBar, PdfKnownDistance } from '../core/contract';
 import {
   returnToWorldScene,
   setPdfBorderCrop,
@@ -20,10 +20,13 @@ import {
   drawLoadingOverlay,
   computeVisibleTileWindows,
   usePdfTileCache,
+  defaultRectCrop,
+  cropPoints,
+  traceBorderCropSheetPx,
+  drawBorderCropSheetPx,
 } from './pdfSceneShared';
 import { SingleSheetScene } from './SingleSheetScene';
 
-const CROP_STROKE_COLOR = '#53c7c0';
 const CROP_HANDLE_RADIUS = 40;
 const CROP_MIDPOINT_RADIUS = 20;
 const CROP_HIT_RADIUS = 50;
@@ -126,48 +129,8 @@ function drawKnownDistanceSheetPx(
   ctx.restore();
 }
 
-function defaultRectCrop(sheet: Pick<PdfSheetEntry, 'widthPx150' | 'heightPx150'>): CropRect {
-  return { kind: 'rect', x: 0, y: 0, width: sheet.widthPx150, height: sheet.heightPx150 };
-}
-
 function effectiveCrop(crop: BorderCrop | null, sheet: Pick<PdfSheetEntry, 'widthPx150' | 'heightPx150'>): BorderCrop {
   return crop ?? defaultRectCrop(sheet);
-}
-
-function cropPoints(crop: BorderCrop): Point2[] {
-  if (crop.kind === 'polygon') return crop.points.map(([x, y]) => ({ x, y }));
-  return [
-    { x: crop.x, y: crop.y },
-    { x: crop.x + crop.width, y: crop.y },
-    { x: crop.x + crop.width, y: crop.y + crop.height },
-    { x: crop.x, y: crop.y + crop.height },
-  ];
-}
-
-function traceBorderCropSheetPx(
-  ctx: CanvasRenderingContext2D,
-  crop: BorderCrop,
-): void {
-  ctx.beginPath();
-  if (crop.kind === 'rect') {
-    ctx.rect(crop.x, crop.y, crop.width, crop.height);
-    return;
-  }
-  const points = cropPoints(crop);
-  if (points.length < 2) return;
-  ctx.moveTo(points[0]!.x, points[0]!.y);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i]!.x, points[i]!.y);
-  }
-  ctx.closePath();
-}
-
-function drawBorderCropSheetPx(
-  ctx: CanvasRenderingContext2D,
-  crop: BorderCrop,
-): void {
-  traceBorderCropSheetPx(ctx, crop);
-  ctx.stroke();
 }
 
 function cropMidpoints(crop: BorderCrop): Array<Point2 & { insertIndex: number }> {
@@ -243,6 +206,7 @@ function drawCropOverlay(
   crop: BorderCrop | null,
   sheet: Pick<PdfSheetEntry, 'widthPx150' | 'heightPx150'>,
   showHandles: boolean,
+  edgeColor: string,
 ): void {
   const activeCrop = effectiveCrop(crop, sheet);
   const points = cropPoints(activeCrop);
@@ -258,8 +222,8 @@ function drawCropOverlay(
     ctx.restore();
   }
   ctx.save();
-  ctx.strokeStyle = CROP_STROKE_COLOR;
-  ctx.fillStyle = CROP_STROKE_COLOR;
+  ctx.strokeStyle = edgeColor;
+  ctx.fillStyle = edgeColor;
   ctx.lineWidth = 4;
   ctx.globalAlpha = crop ? 1 : 0.45;
   drawBorderCropSheetPx(ctx, activeCrop);
@@ -341,11 +305,14 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
           if (loadingState !== 'ready' && (cropActive || !sheet.borderCrop)) {
             drawLoadingOverlay(ctx, 0, 0, sheet.widthPx150, sheet.heightPx150, status);
           }
-          if (sheet.borderCrop) {
+          const showEdge = sheet.edgeVisible || cropActive;
+          if (showEdge) {
             ctx.save();
-            ctx.strokeStyle = '#53c7c0';
+            ctx.globalAlpha *= (sheet.markupOpacity ?? 1);
+            const boundary = sheet.borderCrop ?? defaultRectCrop(sheet);
+            ctx.strokeStyle = sheet.edgeColor ?? sheet.markupColor ?? '#d4380d';
             ctx.lineWidth = 8;
-            drawBorderCropSheetPx(ctx, sheet.borderCrop);
+            drawBorderCropSheetPx(ctx, boundary);
             ctx.restore();
           }
           if (sheet.northArrow?.visible || sheet.scaleBar?.visible || sheet.knownDistance?.visible) {
@@ -375,7 +342,7 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
       };
       draw();
       return () => window.cancelAnimationFrame(raf);
-    }, [cropActive, loadingState, sheet.borderCrop, sheet.heightPx150, sheet.knownDistance, sheet.markupOpacity, sheet.northArrow, sheet.opacityPct, sheet.scaleBar, sheet.widthPx150, status, tilesRef]);
+    }, [cropActive, loadingState, sheet.borderCrop, sheet.edgeColor, sheet.edgeVisible, sheet.heightPx150, sheet.knownDistance, sheet.markupOpacity, sheet.northArrow, sheet.opacityPct, sheet.scaleBar, sheet.widthPx150, status, tilesRef]);
 
     return <canvas ref={canvasRef} width={sheet.widthPx150} height={sheet.heightPx150} />;
   },
@@ -394,7 +361,7 @@ function PdfCropOverlayCanvas({ sheet, active }: { sheet: PdfSheetEntry; active:
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       return;
     }
-    drawCropOverlay(ctx, sheet.borderCrop, sheet, active);
+    drawCropOverlay(ctx, sheet.borderCrop, sheet, active, sheet.edgeColor ?? sheet.markupColor ?? '#d4380d');
   }, [active, sheet]);
 
   return (
@@ -899,7 +866,7 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
         {sheets.map((sheet) => (
           <div
             key={sheet.handle}
-            className={`${styles.pdfSheetLayer} ${sheet.handle === selected?.handle ? styles.pdfSheetLayerSelected : ''} ${sheet.borderCrop ? styles.pdfSheetLayerCropped : ''}`}
+            className={`${styles.pdfSheetLayer} ${sheet.handle === selected?.handle ? styles.pdfSheetLayerSelected : ''}`}
             style={{
               width: sheet.widthPx150,
               height: sheet.heightPx150,

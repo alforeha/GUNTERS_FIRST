@@ -41,6 +41,8 @@ export interface PdfRenderableSheet {
   scaleBar: PdfScaleBar | null;
   knownDistance: PdfKnownDistance | null;
   markupOpacity: number;
+  edgeVisible: boolean;
+  edgeColor: string;
 }
 
 export class RenderPdf {
@@ -66,6 +68,7 @@ export class RenderPdf {
   private northArrowGroup: THREE.Group | null = null;
   private scaleBarGroup: THREE.Group | null = null;
   private knownDistanceGroup: THREE.Group | null = null;
+  private edgeGroup: THREE.Group | null = null;
   private sheetRenderOrder = 30;
 
   constructor(
@@ -90,6 +93,7 @@ export class RenderPdf {
     this.buildNorthArrowOverlay();
     this.buildScaleBarOverlay();
     this.buildKnownDistanceOverlay();
+    this.buildEdgeOverlay();
     this.worker = new Worker(new URL('../workers/pdf.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<PdfWorkerMessage>) => {
       const resolver = this.pending.get(e.data.id);
@@ -125,6 +129,7 @@ export class RenderPdf {
     this.disposeNorthArrowOverlay();
     this.disposeScaleBarOverlay();
     this.disposeKnownDistanceOverlay();
+    this.disposeEdgeOverlay();
     this.group.removeFromParent();
   }
 
@@ -154,8 +159,11 @@ export class RenderPdf {
     const scaleBarChanged = JSON.stringify(oldScaleBar) !== JSON.stringify(sheet.scaleBar);
     const knownDistanceChanged = JSON.stringify(oldKnownDistance) !== JSON.stringify(sheet.knownDistance);
     const oldMarkupOpacity = this.sheet.markupOpacity;
+    const oldEdgeVisible = this.sheet.edgeVisible;
+    const oldEdgeColor = this.sheet.edgeColor;
     this.sheet = sheet;
     const markupOpacityChanged = oldMarkupOpacity !== sheet.markupOpacity;
+    const edgeChanged = oldEdgeVisible !== sheet.edgeVisible || oldEdgeColor !== sheet.edgeColor;
     this.applyTransform();
     if (scaleChanged || cropChanged) {
       this.clearLoadedTiles();
@@ -166,7 +174,7 @@ export class RenderPdf {
       this.requestRender();
     }
     // If ONLY markupOpacity changed, update overlay material opacities without rebuild
-    if (markupOpacityChanged && !scaleChanged && !northArrowChanged && !scaleBarChanged && !knownDistanceChanged && !cropChanged) {
+    if (markupOpacityChanged && !scaleChanged && !northArrowChanged && !scaleBarChanged && !knownDistanceChanged && !cropChanged && !edgeChanged) {
       this.applyOverlayOpacity(sheet.markupOpacity);
     } else if (scaleChanged || northArrowChanged || cropChanged) {
       // Visibility-only: just toggle group.visible, no geometry rebuild
@@ -206,6 +214,18 @@ export class RenderPdf {
         this.requestRender();
       } else {
         this.buildKnownDistanceOverlay();
+      }
+    }
+    if (scaleChanged || edgeChanged || cropChanged) {
+      const edgeVisOnly = !scaleChanged && !cropChanged
+        && this.edgeGroup !== null
+        && oldEdgeVisible !== sheet.edgeVisible
+        && oldEdgeColor === sheet.edgeColor;
+      if (edgeVisOnly && this.edgeGroup) {
+        this.edgeGroup.visible = sheet.edgeVisible;
+        this.requestRender();
+      } else {
+        this.buildEdgeOverlay();
       }
     }
     this.setDisplay(sheet.visible, sheet.opacityPct);
@@ -926,8 +946,69 @@ export class RenderPdf {
     this.knownDistanceGroup = null;
   }
 
+  private buildEdgeOverlay(): void {
+    this.disposeEdgeOverlay();
+    const ppf = this.pixelsPerFoot();
+    const sheetW = this.sheet.widthPx150;
+    const sheetH = this.sheet.heightPx150;
+
+    const toWorld2 = (spx: number, spy: number): [number, number] => [
+      (spx - sheetW / 2) / ppf,
+      -((spy - sheetH / 2) / ppf),
+    ];
+
+    const points: [number, number][] = this.sheet.borderCrop
+      ? cropClipPolygon(this.sheet.borderCrop, sheetW, sheetH)
+      : [[0, 0], [sheetW, 0], [sheetW, sheetH], [0, sheetH]];
+
+    if (points.length < 3) return;
+
+    const worldPts = points.map(([spx, spy]) => {
+      const [wx, wy] = toWorld2(spx, spy);
+      return new THREE.Vector3(wx, wy, 0);
+    });
+
+    const color = new THREE.Color(this.sheet.edgeColor);
+    const mat = new THREE.LineBasicMaterial({
+      color,
+      depthWrite: false,
+      depthTest: false,
+      transparent: true,
+      opacity: this.sheet.markupOpacity,
+      toneMapped: false,
+    });
+
+    const geo = new THREE.BufferGeometry().setFromPoints(worldPts.concat(worldPts[0]!));
+    const line = new THREE.LineLoop(geo, mat);
+    line.renderOrder = 100;
+
+    const group = new THREE.Group();
+    group.name = `pdf-edge:${this.handle}`;
+    group.renderOrder = 100;
+    group.visible = this.sheet.edgeVisible;
+    group.add(line);
+
+    this.group.add(group);
+    this.edgeGroup = group;
+    this.requestRender();
+  }
+
+  private disposeEdgeOverlay(): void {
+    if (!this.edgeGroup) return;
+    this.edgeGroup.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
+        obj.geometry.dispose();
+        const mat = obj.material as THREE.MeshBasicMaterial | THREE.LineBasicMaterial;
+        if ('map' in mat && mat.map) mat.map.dispose();
+        mat.dispose();
+      }
+    });
+    this.edgeGroup.removeFromParent();
+    this.edgeGroup = null;
+  }
+
   private applyOverlayOpacity(opacity: number): void {
-    const groups = [this.northArrowGroup, this.scaleBarGroup, this.knownDistanceGroup];
+    const groups = [this.northArrowGroup, this.scaleBarGroup, this.knownDistanceGroup, this.edgeGroup];
     for (const group of groups) {
       if (!group) continue;
       group.traverse((obj) => {

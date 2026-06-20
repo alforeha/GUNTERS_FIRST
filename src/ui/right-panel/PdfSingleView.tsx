@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../../state/store';
-import { returnToWorldScene, setScaleBar, setNorthArrow } from '../importController';
+import { returnToWorldScene, setScaleBar, setNorthArrow, setEdge } from '../importController';
 import { ManagerTable } from './ManagerTable';
 import type { ManagerTableProps, ManagerLayerDef, ManagerElementDef, ManagerColumn, ManagerCellContext } from './shared';
 import styles from '../App.module.css';
@@ -40,6 +40,9 @@ export function PdfSingleView() {
     if (northArrow && !customColors['north']) {
       setNorthArrow(sheet.handle, { ...northArrow, color: layerColor });
     }
+    if (!customColors['edge']) {
+      setEdge(sheet.handle, { color: layerColor });
+    }
   }, [sheet, scaleBar, northArrow, layerColor, customColors]);
 
   const callbacks = useMemo((): ManagerTableProps<PdfElementData>['callbacks'] => ({
@@ -50,6 +53,7 @@ export function PdfSingleView() {
       patchPdfSheet(sheet.handle, { markupColor: color } as any);
       if (scaleBar && !customColors['scale']) setScaleBar(sheet.handle, { ...scaleBar, color });
       if (northArrow && !customColors['north']) setNorthArrow(sheet.handle, { ...northArrow, color });
+      if (!customColors['edge']) setEdge(sheet.handle, { color });
     },
     onSetLayerOpacity: (_layerId, opacity) => {
       setLayerOpacity(opacity);
@@ -61,6 +65,8 @@ export function PdfSingleView() {
         setScaleBar(sheet.handle, { ...scaleBar, visible: !scaleBar.visible });
       } else if (elementId === 'north' && northArrow) {
         setNorthArrow(sheet.handle, { ...northArrow, visible: !northArrow.visible });
+      } else if (elementId === 'edge') {
+        setEdge(sheet.handle, { visible: !sheet.edgeVisible });
       }
     },
     onSetElementMode: () => {},
@@ -113,6 +119,8 @@ export function PdfSingleView() {
                   setScaleBar(sheet!.handle, { ...scaleBar, color: ev.target.value });
                 } else if (ctx.elementId === 'north' && northArrow) {
                   setNorthArrow(sheet!.handle, { ...northArrow, color: ev.target.value });
+                } else if (ctx.elementId === 'edge') {
+                  setEdge(sheet!.handle, { color: ev.target.value });
                 }
               }}
               title={`${ctx.name} color: ${color}`}
@@ -130,6 +138,8 @@ export function PdfSingleView() {
                     setScaleBar(sheet!.handle, { ...scaleBar, color: layerColor });
                   } else if (ctx.elementId === 'north' && northArrow) {
                     setNorthArrow(sheet!.handle, { ...northArrow, color: layerColor });
+                  } else if (ctx.elementId === 'edge') {
+                    setEdge(sheet!.handle, { color: layerColor });
                   }
                 }}
               >
@@ -164,9 +174,9 @@ export function PdfSingleView() {
       id: 'edge',
       name: 'Edge',
       mode: 'set-own',
-      disabled: true,
-      disabledReason: 'not configured',
-      data: { ownVisible: false, ownColor: layerColor, opacity: 1 },
+      disabled: !sheet,
+      disabledReason: !sheet ? 'no sheet' : undefined,
+      data: { ownVisible: sheet?.edgeVisible ?? false, ownColor: sheet?.edgeColor ?? layerColor, opacity: 1 },
     },
     {
       id: 'scale',
@@ -184,7 +194,7 @@ export function PdfSingleView() {
       disabledReason: northArrow ? undefined : 'not set',
       data: { ownVisible: northArrow?.visible ?? true, ownColor: northArrow?.color ?? layerColor, opacity: 1 },
     },
-  ], [scaleBar, northArrow, layerColor]);
+  ], [scaleBar, northArrow, layerColor, sheet?.edgeVisible, sheet?.edgeColor]);
 
   const layers = useMemo((): ManagerLayerDef<PdfElementData>[] => [
     {

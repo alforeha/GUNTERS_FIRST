@@ -213,6 +213,8 @@ export interface PdfSheetEntry {
   markupOpacity: number;
   /** layer color for system markups (default PDF red-orange #d4380d) */
   markupColor: string;
+  edgeVisible: boolean;
+  edgeColor: string;
   opacityPct: number;
   whiteThreshold: number;
   draped: boolean;
