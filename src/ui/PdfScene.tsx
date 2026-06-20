@@ -462,6 +462,11 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
 
   const minZoomRef = useRef(0.001);
 
+  const layoutKey = useMemo(
+    () => sheets.map(s => `${s.handle}:${s.flatOffsetPx.x},${s.flatOffsetPx.y}:${s.widthPx150}x${s.heightPx150}:${s.orientation}:${s.calibration?.pixelsPerUnit ?? 100}`).join('|'),
+    [sheets],
+  );
+
   useEffect(() => {
     const el = sceneRef.current;
     if (!el) return;
@@ -486,7 +491,7 @@ function GroupPdfScene({ label, sheets }: { label: string; sheets: PdfSheetEntry
     minZoomRef.current = Math.max(fitZoom * 0.25, 0.001);
     setZoom(fitZoom);
     setPan({ x: vw / 2 - (minX + bbW / 2) * fitZoom, y: vh / 2 + (minY + bbH / 2) * fitZoom });
-  }, []);
+  }, [layoutKey]);
 
   useEffect(() => {
     const canvas = overlayCanvasRef.current;

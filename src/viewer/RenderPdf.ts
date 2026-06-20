@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { BorderCrop, PdfCalibration, PdfNorthArrow, PdfScaleBar, PdfKnownDistance } from '../core/contract';
+import type { BorderCrop, PdfCalibration, PdfNorthArrow, PdfPlacement, PdfScaleBar, PdfKnownDistance } from '../core/contract';
 import type {
   PdfDecodeTileRequest,
   PdfOpenRequest,
@@ -43,6 +43,7 @@ export interface PdfRenderableSheet {
   markupOpacity: number;
   edgeVisible: boolean;
   edgeColor: string;
+  placement: PdfPlacement | null;
 }
 
 export class RenderPdf {
@@ -326,14 +327,22 @@ export class RenderPdf {
   }
 
   private applyTransform(): void {
+    const placement = this.sheet.placement;
+    if (placement) {
+      this.group.position.set(
+        placement.translation.x - this.origin[0],
+        placement.translation.y - this.origin[1],
+        placement.translation.z - this.origin[2],
+      );
+      this.group.rotation.set(0, 0, -THREE.MathUtils.degToRad(placement.rotationDeg));
+      this.group.scale.setScalar(1);
+      this.group.visible = this.visibleAll;
+      return;
+    }
     const rotation = THREE.MathUtils.degToRad(this.sheet.orientation ?? 0);
-    const ppf = this.pixelsPerFoot();
-    this.group.position.set(
-      this.sheet.flatOffsetPx.x / ppf - this.origin[0],
-      this.sheet.flatOffsetPx.y / ppf - this.origin[1],
-      -this.origin[2],
-    );
+    this.group.position.set(0, 0, -this.origin[2]);
     this.group.rotation.set(0, 0, -rotation);
+    this.group.scale.setScalar(1);
     this.group.visible = this.visibleAll;
   }
 
@@ -341,8 +350,6 @@ export class RenderPdf {
    *  Used when a positioned dataset first anchors sceneOrigin after PDFs
    *  were already loaded — re-centers the PDF on the data. */
   setOrigin(origin: Vec3): void {
-    const ppf = this.pixelsPerFoot();
-    this.sheet.flatOffsetPx = { x: origin[0] * ppf, y: origin[1] * ppf };
     this.origin = origin;
     this.applyTransform();
   }

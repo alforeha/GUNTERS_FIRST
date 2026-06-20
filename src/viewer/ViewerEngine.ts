@@ -9,7 +9,7 @@ import { pickClosestScreenPoint, worldUnitsPerPixel } from './editing';
 import { RenderSurface, type OverlayKind, type ResolvedDisplay } from './RenderSurface';
 import { RenderDxf, type DxfDrapeResult, type DxfLayerDisplay } from './RenderDxf';
 import { RenderGeotiff } from './RenderGeotiff';
-import { RenderPdf, type PdfRenderableSheet, pixelsPerFootForSheet } from './RenderPdf';
+import { RenderPdf, type PdfRenderableSheet } from './RenderPdf';
 import { RenderPointCloud } from './RenderPointCloud';
 import type { FilterState, PointDisplayMode } from './pointCloudLod';
 import { buildNorthGizmo, projectGizmoNorth, GIZMO_SIZE, GIZMO_MARGIN } from './gizmo';
@@ -519,10 +519,6 @@ export class ViewerEngine {
     // PDF must NOT anchor sceneOrigin — only positioned datasets do.
     // If positioned data already exists, default the PDF to the data center.
     const origin = this.sceneOrigin ?? [0, 0, 0] as Vec3;
-    if (this.sceneOrigin) {
-      const ppf = pixelsPerFootForSheet(sheet);
-      sheet.flatOffsetPx = { x: origin[0] * ppf, y: origin[1] * ppf };
-    }
     const pdf = new RenderPdf(
       sheet.handle,
       sheet,
@@ -587,6 +583,7 @@ export class ViewerEngine {
       widthPx150: sheet.widthPx150,
       heightPx150: sheet.heightPx150,
       borderCrop: sheet.borderCrop,
+      placement: sheet.placement,
     });
     const footprintChanged = this.pdfFootprints.get(sheet.handle) !== footprintKey;
     this.pdfFootprints.set(sheet.handle, footprintKey);
@@ -614,6 +611,10 @@ export class ViewerEngine {
     if (!pdf) return null;
     const ppf = pdf.pixelsPerFoot();
     return { x: pdf.group.position.x * ppf, y: pdf.group.position.y * ppf };
+  }
+
+  getSceneOrigin(): Vec3 {
+    return this.sceneOrigin ?? [0, 0, 0];
   }
 
   addPointCloud(dataset: PointCloudDataset): string {
@@ -1149,6 +1150,37 @@ export class ViewerEngine {
     this.raycaster.firstHitOnly = true;
     const hit = this.raycaster.intersectObject(surface.pickMesh, false)[0];
     return hit ? hit.point.z / this.exaggeration : null;
+  }
+
+  /** Raycast at pointer against surfaces, PDF tiles, then z=0 ground plane.
+   *  Returns the world-space intersection or null. */
+  pickWorldPointAtPointer(): THREE.Vector3 | null {
+    if (this.disposed || !this.pointerInside) return null;
+    this.raycaster.setFromCamera(this.pointerNdc, this.activeCamera);
+    let best: THREE.Intersection | null = null;
+    // surfaces
+    const active = this.activeHandle ? this.surfaces.get(this.activeHandle) : undefined;
+    const surfTargets = active ? [active] : [...this.surfaces.values()];
+    for (const s of surfTargets) {
+      if (!s.pickMesh || !s.group.visible) continue;
+      const hits = this.raycaster.intersectObject(s.pickMesh, false);
+      if (hits.length > 0 && (!best || hits[0]!.distance < best.distance)) best = hits[0]!;
+    }
+    // PDF tile meshes
+    const pdfTargets: THREE.Object3D[] = [];
+    for (const pdf of this.pdfs.values()) {
+      if (pdf.group.visible) pdfTargets.push(pdf.group);
+    }
+    if (pdfTargets.length > 0) {
+      const pdfHits = this.raycaster.intersectObjects(pdfTargets, true);
+      if (pdfHits.length > 0 && (!best || pdfHits[0]!.distance < best.distance)) best = pdfHits[0]!;
+    }
+    if (best) return best.point.clone();
+    // fallback: z=0 ground plane in world space
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const intersection = new THREE.Vector3();
+    if (this.raycaster.ray.intersectPlane(plane, intersection)) return intersection;
+    return null;
   }
 
   private applyHoverLook(): void {

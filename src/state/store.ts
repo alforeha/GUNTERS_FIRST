@@ -349,6 +349,10 @@ interface AppState {
   returnToWorldScene: () => void;
   cameraMode: CameraMode;
   setCameraMode: (m: CameraMode) => void;
+  placingPdfHandle: string | null;
+  setPlacingPdfHandle: (handle: string | null) => void;
+  prePlacementCameraMode: CameraMode;
+  setPrePlacementCameraMode: (m: CameraMode) => void;
   hoverArmed: boolean;
   setHoverArmed: (armed: boolean) => void;
   hoverHeight: number;
@@ -481,6 +485,10 @@ export const useAppStore = create<AppState>()(
 
     cameraMode: 'orbit',
     setCameraMode: (m) => set({ cameraMode: m }),
+    placingPdfHandle: null,
+    setPlacingPdfHandle: (handle) => set({ placingPdfHandle: handle }),
+    prePlacementCameraMode: 'orbit',
+    setPrePlacementCameraMode: (m) => set({ prePlacementCameraMode: m }),
     hoverArmed: false,
     setHoverArmed: (armed) => set({ hoverArmed: armed }),
     hoverHeight: 5,

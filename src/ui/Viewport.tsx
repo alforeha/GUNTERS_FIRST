@@ -12,6 +12,7 @@ import {
   undoEdit,
 } from './importController';
 import { PdfScene } from './PdfScene';
+import { PlacementToolbar } from './PlacementToolbar';
 import styles from './App.module.css';
 
 function readTestMeshParam(): number | null {
@@ -293,6 +294,7 @@ function EditCallout() {
 // ── ITEM34: bottom-left mode controls overlay ──────────────────────────
 
 function CanvasModeControls() {
+  const placingPdfHandle = useAppStore((s) => s.placingPdfHandle);
   const hasContent = useAppStore(
     (s) => s.surfaces.length > 0 || s.dxfs.length > 0 || s.geotiffs.length > 0 || s.pdfSheets.length > 0 || s.pointClouds.length > 0,
   );
@@ -309,7 +311,7 @@ function CanvasModeControls() {
   const setHoverSpeed = useAppStore((s) => s.setHoverSpeed);
   const [topZoom, setTopZoom] = useState(50); // 0-100, local-only for TOP zoom slider
 
-  if (!hasContent) return null;
+  if (!hasContent || placingPdfHandle) return null;
 
   return (
     <div className={styles.canvasModeBar}>
@@ -456,6 +458,7 @@ export function Viewport() {
   );
   const sceneMode = useAppStore((s) => s.sceneMode);
   const editSurfaceHandle = useAppStore((s) => s.editSurfaceHandle);
+  const placingPdfHandle = useAppStore((s) => s.placingPdfHandle);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -570,6 +573,7 @@ export function Viewport() {
           <ViewportHud />
           <EditCanvasToolbar />
           <EditCallout />
+          {placingPdfHandle && <PlacementToolbar container={containerRef.current} />}
         </>
       )}
     </div>

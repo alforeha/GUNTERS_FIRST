@@ -6,7 +6,7 @@
 //
 // Sprint 3 (07): this file also owns DISPLAY RESOLUTION — master gates ANDed with
 // per-surface DisplaySettings + mute state, pushed to the engine as one ResolvedDisplay.
-import { sniffFormat, SNIFF_RULES, type BorderCrop, type PdfNorthArrow, type PdfScaleBar, type PdfKnownDistance, type SurfaceModel, writeLandXML } from '../core';
+import { sniffFormat, SNIFF_RULES, type BorderCrop, type PdfNorthArrow, type PdfPlacement, type PdfScaleBar, type PdfKnownDistance, type SurfaceModel, writeLandXML } from '../core';
 import type { WorkerParseMessage, WorkerParseRequest } from '../workers/parse.worker';
 import type { DxfWorkerMessage, DxfWorkerRequest } from '../workers/dxf.worker';
 import type { GeotiffOpenRequest, GeotiffWorkerMessage } from '../workers/geotiff.worker';
@@ -1358,6 +1358,12 @@ export function setEdge(handle: string, patch: { visible?: boolean; color?: stri
 
 export function setPdfFlatOffset(handle: string, flatOffsetPx: { x: number; y: number }): void {
   store.getState().patchPdfSheet(handle, { flatOffsetPx });
+  const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
+  if (sheet) engineHolder.current?.updatePdfSheet(sheet);
+}
+
+export function setPdfPlacement(handle: string, placement: PdfPlacement): void {
+  store.getState().patchPdfSheet(handle, { placement });
   const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
   if (sheet) engineHolder.current?.updatePdfSheet(sheet);
 }
