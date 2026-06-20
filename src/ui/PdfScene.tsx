@@ -354,6 +354,8 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
               traceBorderCropSheetPx(ctx, sheet.borderCrop);
               ctx.clip();
             }
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = prevAlpha * (sheet.markupOpacity ?? 1);
             if (sheet.northArrow?.visible) {
               drawNorthArrowSheetPx(ctx, sheet.northArrow.x, sheet.northArrow.y, sheet.northArrow.angleDeg, sheet.northArrow.color);
             }
@@ -363,6 +365,7 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
             if (sheet.knownDistance?.visible) {
               drawKnownDistanceSheetPx(ctx, sheet.knownDistance);
             }
+            ctx.globalAlpha = prevAlpha;
             if (sheet.borderCrop) {
               ctx.restore();
             }
@@ -372,7 +375,7 @@ const PdfSheetCanvas = forwardRef<PdfSheetCanvasHandle, { sheet: PdfSheetEntry; 
       };
       draw();
       return () => window.cancelAnimationFrame(raf);
-    }, [cropActive, loadingState, sheet.borderCrop, sheet.heightPx150, sheet.knownDistance, sheet.northArrow, sheet.opacityPct, sheet.scaleBar, sheet.widthPx150, status, tilesRef]);
+    }, [cropActive, loadingState, sheet.borderCrop, sheet.heightPx150, sheet.knownDistance, sheet.markupOpacity, sheet.northArrow, sheet.opacityPct, sheet.scaleBar, sheet.widthPx150, status, tilesRef]);
 
     return <canvas ref={canvasRef} width={sheet.widthPx150} height={sheet.heightPx150} />;
   },

@@ -43,7 +43,7 @@ interface NorthArrowDraft {
 function defaultNorthArrow(sheet: PdfSheetEntry): NorthArrowDraft {
   return sheet.northArrow
     ? { x: sheet.northArrow.x, y: sheet.northArrow.y, angleDeg: sheet.northArrow.angleDeg, color: sheet.northArrow.color }
-    : { x: sheet.widthPx150 / 2, y: sheet.heightPx150 / 2, angleDeg: 0, color: '#e84f8a' };
+    : { x: sheet.widthPx150 / 2, y: sheet.heightPx150 / 2, angleDeg: 0, color: sheet.markupColor ?? '#d4380d' };
 }
 
 export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 'calibrate' | 'orient' }) {
@@ -222,14 +222,17 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
 
         if (kind === 'calibrate') {
           if (toolMode === 'scale-bar') {
+            const prevAlpha = ctx.globalAlpha;
+            ctx.globalAlpha = prevAlpha * (sheet.markupOpacity ?? 1);
             const sc = sbCenterRef.current;
             const sc0 = pageToScreen({ x: sc.x - SCALE_BAR_LEN_PX / 2, y: sc.y });
             const sc1 = pageToScreen({ x: sc.x + SCALE_BAR_LEN_PX / 2, y: sc.y });
             const scC = pageToScreen(sc);
             const headLen = 10;
+            const sbColor = sheet.scaleBar?.color ?? sheet.markupColor ?? '#d4380d';
             ctx.save();
-            ctx.strokeStyle = '#53c7c0';
-            ctx.fillStyle = '#53c7c0';
+            ctx.strokeStyle = sbColor;
+            ctx.fillStyle = sbColor;
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(sc0.x, sc0.y);
@@ -248,11 +251,12 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
             ctx.closePath();
             ctx.fill();
             ctx.font = '12px sans-serif';
-            ctx.fillStyle = '#53c7c0';
+            ctx.fillStyle = sbColor;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
             ctx.fillText('drag to move', scC.x, scC.y + 8);
             ctx.restore();
+            ctx.globalAlpha = prevAlpha;
           }
 
           if (toolMode === 'known-distance') {
@@ -321,13 +325,16 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
         }
 
         if (kind === 'orient') {
+          const prevAlpha = ctx.globalAlpha;
+          ctx.globalAlpha = prevAlpha * (sheet.markupOpacity ?? 1);
           const d = northDraftRef.current;
+          const arrowColor = sheet.northArrow?.color ?? sheet.markupColor ?? '#d4380d';
           const centerSc = pageToScreen({ x: d.x, y: d.y });
           const tipPage = northTipInPage({ x: d.x, y: d.y }, d.angleDeg);
           const tipSc = pageToScreen(tipPage);
           const radiusSc = NORTH_ARROW_RADIUS * zoom;
           ctx.save();
-          drawNorthArrow(ctx, centerSc, tipSc, d.color, radiusSc);
+          drawNorthArrow(ctx, centerSc, tipSc, arrowColor, radiusSc);
           ctx.restore();
 
           const blurbX = tipSc.x + 14;
@@ -343,6 +350,7 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
           ctx.textBaseline = 'top';
           ctx.fillText(`${d.angleDeg.toFixed(1)} deg from N`, blurbX, blurbY - 10);
           ctx.restore();
+          ctx.globalAlpha = prevAlpha;
         }
 
         const visWindows = computeVisibleTileWindows(
@@ -365,7 +373,7 @@ export function SingleSheetScene({ sheet, kind }: { sheet: PdfSheetEntry; kind: 
     const ft = Number(sbFtInput);
     if (!Number.isFinite(ft) || ft <= 0) { setMessage('Enter a valid distance in feet'); return; }
     const ppf = SCALE_BAR_LEN_PX / ft;
-    const next: PdfScaleBar = { x: sbCenterRef.current.x, y: sbCenterRef.current.y, realWorldFt: ft, color: '#53c7c0', visible: true };
+    const next: PdfScaleBar = { x: sbCenterRef.current.x, y: sbCenterRef.current.y, realWorldFt: ft, color: sheet.scaleBar?.color ?? sheet.markupColor ?? '#d4380d', visible: true };
     setScaleBar(sheet.handle, next);
     setKnownDistance(sheet.handle, null);
     setKdPhase('idle'); setKdBegin(null); setKdEnd(null); setKdFtInput('');

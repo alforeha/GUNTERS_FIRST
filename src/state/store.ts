@@ -209,6 +209,10 @@ export interface PdfSheetEntry {
   northArrow: PdfNorthArrow | null;
   scaleBar: PdfScaleBar | null;
   knownDistance: PdfKnownDistance | null;
+  /** opacity of system markup overlays (north/scale) in 2D + 3D, 0-1, default 1 */
+  markupOpacity: number;
+  /** layer color for system markups (default PDF red-orange #d4380d) */
+  markupColor: string;
   opacityPct: number;
   whiteThreshold: number;
   draped: boolean;

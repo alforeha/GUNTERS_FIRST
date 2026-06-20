@@ -40,6 +40,7 @@ export interface PdfRenderableSheet {
   northArrow: PdfNorthArrow | null;
   scaleBar: PdfScaleBar | null;
   knownDistance: PdfKnownDistance | null;
+  markupOpacity: number;
 }
 
 export class RenderPdf {
@@ -152,7 +153,9 @@ export class RenderPdf {
     const northArrowChanged = JSON.stringify(oldNorthArrow) !== JSON.stringify(sheet.northArrow);
     const scaleBarChanged = JSON.stringify(oldScaleBar) !== JSON.stringify(sheet.scaleBar);
     const knownDistanceChanged = JSON.stringify(oldKnownDistance) !== JSON.stringify(sheet.knownDistance);
+    const oldMarkupOpacity = this.sheet.markupOpacity;
     this.sheet = sheet;
+    const markupOpacityChanged = oldMarkupOpacity !== sheet.markupOpacity;
     this.applyTransform();
     if (scaleChanged || cropChanged) {
       this.clearLoadedTiles();
@@ -162,7 +165,10 @@ export class RenderPdf {
       this.clearLoadedTiles();
       this.requestRender();
     }
-    if (scaleChanged || northArrowChanged || cropChanged) {
+    // If ONLY markupOpacity changed, update overlay material opacities without rebuild
+    if (markupOpacityChanged && !scaleChanged && !northArrowChanged && !scaleBarChanged && !knownDistanceChanged && !cropChanged) {
+      this.applyOverlayOpacity(sheet.markupOpacity);
+    } else if (scaleChanged || northArrowChanged || cropChanged) {
       // Visibility-only: just toggle group.visible, no geometry rebuild
       const naVisOnly = !scaleChanged
         && this.northArrowGroup !== null
@@ -442,6 +448,7 @@ export class RenderPdf {
       depthWrite: false,
       depthTest: false,
       transparent: true,
+      opacity: this.sheet.markupOpacity,
       toneMapped: false,
     });
 
@@ -518,7 +525,7 @@ export class RenderPdf {
     const uy = Math.sin(rad);
     const perpX = -uy;
     const perpY = ux;
-    const headMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
+    const headMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, opacity: this.sheet.markupOpacity, toneMapped: false, side: THREE.DoubleSide });
 
     if (cropPoly) {
       // Sheet-px tip and base points (headLen/headW are in world units; convert back)
@@ -584,7 +591,7 @@ export class RenderPdf {
       const labelTex = new THREE.CanvasTexture(labelCanvas);
       const labelGeo = new THREE.PlaneGeometry(labelSize, labelSize);
       labelGeo.translate(cx, cy, 0);
-      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
+      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, opacity: this.sheet.markupOpacity, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
       const label = new THREE.Mesh(labelGeo, labelMat);
       label.renderOrder = 101;
       group.add(label);
@@ -639,8 +646,8 @@ export class RenderPdf {
     const headLen = 8 / ppf;
     const headW = 4 / ppf;
     const color = new THREE.Color(sb.color);
-    const lineMat = new THREE.LineBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false });
-    const meshMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, toneMapped: false, side: THREE.DoubleSide });
+    const lineMat = new THREE.LineBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, opacity: this.sheet.markupOpacity, toneMapped: false });
+    const meshMat = new THREE.MeshBasicMaterial({ color, depthWrite: false, depthTest: false, transparent: true, opacity: this.sheet.markupOpacity, toneMapped: false, side: THREE.DoubleSide });
     const group = new THREE.Group();
     group.name = `pdf-scale-bar:${this.handle}`;
     group.renderOrder = 100;
@@ -737,7 +744,7 @@ export class RenderPdf {
       const labelH = labelW * 0.25;
       const labelGeo = new THREE.PlaneGeometry(labelW, labelH);
       labelGeo.translate(cx, cy - halfW * 0.4, 0);
-      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
+      const labelMat = new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, opacity: this.sheet.markupOpacity, alphaTest: 0.1, depthWrite: false, depthTest: false, toneMapped: false, side: THREE.DoubleSide });
       const labelMesh = new THREE.Mesh(labelGeo, labelMat);
       labelMesh.renderOrder = 101;
       group.add(labelMesh);
@@ -919,7 +926,22 @@ export class RenderPdf {
     this.knownDistanceGroup = null;
   }
 
-    private disposeLoadingOverlay(): void {
+  private applyOverlayOpacity(opacity: number): void {
+    const groups = [this.northArrowGroup, this.scaleBarGroup, this.knownDistanceGroup];
+    for (const group of groups) {
+      if (!group) continue;
+      group.traverse((obj) => {
+        const mat = (obj as THREE.Mesh | THREE.Line).material;
+        if (mat && 'opacity' in mat) {
+          mat.opacity = opacity;
+          mat.needsUpdate = true;
+        }
+      });
+    }
+    this.requestRender();
+  }
+
+  private disposeLoadingOverlay(): void {
     if (this.outlineMesh) {
       this.outlineMesh.removeFromParent();
       this.outlineMesh.geometry.dispose();

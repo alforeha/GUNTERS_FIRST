@@ -666,6 +666,8 @@ export function confirmPdfImport(): void {
       northArrow: null,
       scaleBar: null,
       knownDistance: null,
+      markupOpacity: 1,
+      markupColor: '#d4380d',
       borderCrop: null,
       blockOuts: [],
       markups: [],

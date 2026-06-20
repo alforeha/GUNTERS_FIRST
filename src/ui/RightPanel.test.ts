@@ -25,7 +25,7 @@ vi.mock('./importController', () => ({
   undoEdit: vi.fn(),
 }));
 
-import { buildSurfaceExportAction } from './RightPanel';
+import { buildSurfaceExportAction } from './right-panel/ExportSection';
 
 describe('buildSurfaceExportAction', () => {
   beforeEach(() => {
