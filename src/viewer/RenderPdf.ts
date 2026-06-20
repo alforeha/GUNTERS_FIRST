@@ -328,9 +328,23 @@ export class RenderPdf {
   private applyTransform(): void {
     const rotation = THREE.MathUtils.degToRad(this.sheet.orientation ?? 0);
     const ppf = this.pixelsPerFoot();
-    this.group.position.set(this.sheet.flatOffsetPx.x / ppf, this.sheet.flatOffsetPx.y / ppf, -this.origin[2]);
+    this.group.position.set(
+      this.sheet.flatOffsetPx.x / ppf - this.origin[0],
+      this.sheet.flatOffsetPx.y / ppf - this.origin[1],
+      -this.origin[2],
+    );
     this.group.rotation.set(0, 0, -rotation);
     this.group.visible = this.visibleAll;
+  }
+
+  /** Update the scene origin and re-apply the transform.
+   *  Used when a positioned dataset first anchors sceneOrigin after PDFs
+   *  were already loaded — re-centers the PDF on the data. */
+  setOrigin(origin: Vec3): void {
+    const ppf = this.pixelsPerFoot();
+    this.sheet.flatOffsetPx = { x: origin[0] * ppf, y: origin[1] * ppf };
+    this.origin = origin;
+    this.applyTransform();
   }
 
   private buildLoadingOverlay(): void {

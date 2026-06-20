@@ -9,7 +9,7 @@ import { pickClosestScreenPoint, worldUnitsPerPixel } from './editing';
 import { RenderSurface, type OverlayKind, type ResolvedDisplay } from './RenderSurface';
 import { RenderDxf, type DxfDrapeResult, type DxfLayerDisplay } from './RenderDxf';
 import { RenderGeotiff } from './RenderGeotiff';
-import { RenderPdf, type PdfRenderableSheet } from './RenderPdf';
+import { RenderPdf, type PdfRenderableSheet, pixelsPerFootForSheet } from './RenderPdf';
 import { RenderPointCloud } from './RenderPointCloud';
 import type { FilterState, PointDisplayMode } from './pointCloudLod';
 import { buildNorthGizmo, projectGizmoNorth, GIZMO_SIZE, GIZMO_MARGIN } from './gizmo';
@@ -356,9 +356,13 @@ export class ViewerEngine {
   /** Builds the RenderSurface (rebase + mesh) and returns its handle. */
   addSurface(model: SurfaceModel): string {
     if (this.disposed) throw new Error('ViewerEngine: addSurface after dispose');
+    const wasNull = !this.sceneOrigin;
     if (!this.sceneOrigin) {
       // First dataset fixes the SceneOrigin (Float64 bbox center) — risk R1.
       this.sceneOrigin = computeBBox(model.positions).center;
+    }
+    if (wasNull) {
+      for (const pdf of this.pdfs.values()) pdf.setOrigin(this.sceneOrigin);
     }
     const handle = `s${++this.handleCounter}`;
     const surface = new RenderSurface(handle, model, this.sceneOrigin);
@@ -391,10 +395,14 @@ export class ViewerEngine {
   /** Builds the RenderDxf (rebase + per-layer batched linework) and returns its handle. */
   addDxf(dataset: DxfDataset, densify?: number): string {
     if (this.disposed) throw new Error('ViewerEngine: addDxf after dispose');
+    const wasNull = !this.sceneOrigin;
     if (!this.sceneOrigin) {
       // DXF-without-surface path: the DXF anchors the SceneOrigin (R1 still holds)
       const first = dataset.entities[0]?.pts;
       this.sceneOrigin = first && first.length >= 3 ? [first[0]!, first[1]!, first[2]!] : [0, 0, 0];
+    }
+    if (wasNull) {
+      for (const pdf of this.pdfs.values()) pdf.setOrigin(this.sceneOrigin);
     }
     const handle = `d${++this.handleCounter}`;
     const dxf = new RenderDxf(handle, dataset, this.sceneOrigin, densify);
@@ -444,6 +452,7 @@ export class ViewerEngine {
 
   addGeotiff(dataset: GeotiffDataset, file: File, surfaceHandle: string | null): string {
     if (this.disposed) throw new Error('ViewerEngine: addGeotiff after dispose');
+    const wasNull = !this.sceneOrigin;
     if (!this.sceneOrigin) {
       const bounds = dataset.worldBounds;
       this.sceneOrigin = bounds
@@ -453,6 +462,9 @@ export class ViewerEngine {
             0,
           ]
         : [0, 0, 0];
+    }
+    if (wasNull) {
+      for (const pdf of this.pdfs.values()) pdf.setOrigin(this.sceneOrigin);
     }
     const handle = `g${++this.handleCounter}`;
     const geotiff = new RenderGeotiff(
@@ -504,12 +516,18 @@ export class ViewerEngine {
 
   addPdf(sheet: PdfRenderableSheet, file: File): string {
     if (this.disposed) throw new Error('ViewerEngine: addPdf after dispose');
-    if (!this.sceneOrigin) this.sceneOrigin = [0, 0, 0];
+    // PDF must NOT anchor sceneOrigin — only positioned datasets do.
+    // If positioned data already exists, default the PDF to the data center.
+    const origin = this.sceneOrigin ?? [0, 0, 0] as Vec3;
+    if (this.sceneOrigin) {
+      const ppf = pixelsPerFootForSheet(sheet);
+      sheet.flatOffsetPx = { x: origin[0] * ppf, y: origin[1] * ppf };
+    }
     const pdf = new RenderPdf(
       sheet.handle,
       sheet,
       file,
-      this.sceneOrigin,
+      origin,
       this.requestRender,
       () => this.updateSceneMetrics(),
     );
@@ -601,7 +619,11 @@ export class ViewerEngine {
   addPointCloud(dataset: PointCloudDataset): string {
     if (this.disposed) throw new Error('ViewerEngine: addPointCloud after dispose');
     if (!dataset.octree) throw new Error('ViewerEngine: point cloud has no octree');
+    const wasNull = !this.sceneOrigin;
     if (!this.sceneOrigin) this.sceneOrigin = dataset.octree.origin;
+    if (wasNull) {
+      for (const pdf of this.pdfs.values()) pdf.setOrigin(this.sceneOrigin);
+    }
     const handle = `p${++this.handleCounter}`;
     const pointCloud = new RenderPointCloud(handle, dataset, this.sceneOrigin);
     this.pointClouds.set(handle, pointCloud);
