@@ -6,10 +6,15 @@ import type {
   PdfWorkerMessage,
 } from '../workers/pdf.worker';
 import type { Vec3 } from './geometry';
+import type { RenderSurface } from './RenderSurface';
+import { DRAPE_OFFSET_FT } from './RenderDxf';
 
 const TILE_SIZE_PX = 1024;
 export const DEFAULT_PIXELS_PER_FOOT = 100;
 const MAX_CONCURRENT_TILE_DECODES = 4;
+const MIN_DRAPE_SEGMENTS = 8;
+const MAX_DRAPE_SEGMENTS = 24;
+const DRAPE_SEGMENT_SPACING_FT = 1.5;
 
 interface PdfTileState {
   id: string;
@@ -71,6 +76,10 @@ export class RenderPdf {
   private knownDistanceGroup: THREE.Group | null = null;
   private edgeGroup: THREE.Group | null = null;
   private sheetRenderOrder = 30;
+  private target: RenderSurface | null = null;
+  private overlap = false;
+  private warnedMissingPickMesh = false;
+  private drapeExaggeration = 1;
 
   constructor(
     handle: string,
@@ -119,6 +128,51 @@ export class RenderPdf {
       );
     }
     return box.applyMatrix4(this.group.matrixWorld);
+  }
+
+  setTarget(target: RenderSurface | null): void {
+    if (!this.sheet.placement) return;
+    if (this.target === target) return;
+    this.target = target;
+    this.overlap = this.computePdfOverlap();
+    this.clearLoadedTiles();
+    this.notifyBoundsChanged();
+    this.requestRender();
+  }
+
+  private computePdfOverlap(): boolean {
+    if (!this.target || !this.sheet.placement) return false;
+    const surfacePositions = this.target.model.positions;
+    let sMinX = Infinity;
+    let sMinY = Infinity;
+    let sMaxX = -Infinity;
+    let sMaxY = -Infinity;
+    for (let i = 0; i < surfacePositions.length; i += 3) {
+      const x = surfacePositions[i]!;
+      const y = surfacePositions[i + 1]!;
+      if (x < sMinX) sMinX = x;
+      if (x > sMaxX) sMaxX = x;
+      if (y < sMinY) sMinY = y;
+      if (y > sMaxY) sMaxY = y;
+    }
+    const wSize = this.sheetWorldSize();
+    const hw = wSize.width / 2;
+    const hh = wSize.height / 2;
+    const rad = THREE.MathUtils.degToRad(this.sheet.placement.rotationDeg);
+    const cosR = Math.cos(rad);
+    const sinR = Math.sin(rad);
+    const tx = this.sheet.placement.translation.x;
+    const ty = this.sheet.placement.translation.y;
+    const localCorners: [number, number][] = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+    const worldCorners = localCorners.map(([cx, cy]) => ({
+      x: tx + cosR * cx - sinR * cy,
+      y: ty + sinR * cx + cosR * cy,
+    }));
+    const pMinX = Math.min(...worldCorners.map((c) => c.x));
+    const pMaxX = Math.max(...worldCorners.map((c) => c.x));
+    const pMinY = Math.min(...worldCorners.map((c) => c.y));
+    const pMaxY = Math.max(...worldCorners.map((c) => c.y));
+    return !(pMaxX < sMinX || pMinX > sMaxX || pMaxY < sMinY || pMinY > sMaxY);
   }
 
   dispose(): void {
@@ -243,7 +297,7 @@ export class RenderPdf {
     this.requestRender();
   }
 
-  updateVisible(camera: THREE.Camera): boolean {
+  updateVisible(camera: THREE.Camera, exaggeration = 1): boolean {
     this.group.visible = this.visibleAll;
     if (!this.group.visible || !this.workerReady) {
       let changed = false;
@@ -256,6 +310,8 @@ export class RenderPdf {
       if (changed) this.notifyBoundsChanged();
       return changed;
     }
+
+    this.drapeExaggeration = exaggeration;
 
     const projScreen = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const frustum = new THREE.Frustum().setFromProjectionMatrix(projScreen);
@@ -1174,8 +1230,59 @@ export class RenderPdf {
     }
     const size = tile.localBounds.getSize(new THREE.Vector3());
     const center = tile.localBounds.getCenter(new THREE.Vector3());
-    const geometry = new THREE.PlaneGeometry(size.x, size.y, 1, 1);
+
+    const draped = this.target && this.overlap;
+    const segments = draped
+      ? THREE.MathUtils.clamp(
+          Math.ceil(Math.max(size.x, size.y) / DRAPE_SEGMENT_SPACING_FT),
+          MIN_DRAPE_SEGMENTS,
+          MAX_DRAPE_SEGMENTS,
+        )
+      : 1;
+    const geometry = new THREE.PlaneGeometry(size.x, size.y, segments, segments);
     geometry.translate(center.x, center.y, 0);
+
+    if (draped && this.target?.pickMesh) {
+      const position = geometry.getAttribute('position') as THREE.BufferAttribute;
+      const raycaster = new THREE.Raycaster();
+      raycaster.firstHitOnly = true;
+      const down = new THREE.Vector3(0, 0, -1);
+      const rayOrigin = new THREE.Vector3();
+      const surfaceBounds = this.target.bounds;
+      const exaggeration = Math.max(this.drapeExaggeration, 1e-6);
+      const zTop = (surfaceBounds.max.z + 100) * exaggeration;
+      const groupMatrix = this.group.matrix;
+      let minZ = Number.POSITIVE_INFINITY;
+      let maxZ = Number.NEGATIVE_INFINITY;
+
+      for (let i = 0; i < position.count; i++) {
+        const docLocal = new THREE.Vector3(position.getX(i), position.getY(i), 0);
+        const cgPt = docLocal.applyMatrix4(groupMatrix);
+        rayOrigin.set(cgPt.x, cgPt.y, zTop);
+        raycaster.set(rayOrigin, down);
+        raycaster.far = Infinity;
+        const hit = raycaster.intersectObject(this.target!.pickMesh!, false)[0];
+        const cgZ = hit ? hit.point.z / exaggeration + DRAPE_OFFSET_FT : surfaceBounds.min.z;
+        const localZ = cgZ - this.group.position.z;
+        position.setZ(i, localZ);
+        if (localZ < minZ) minZ = localZ;
+        if (localZ > maxZ) maxZ = localZ;
+      }
+      position.needsUpdate = true;
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      tile.bounds = new THREE.Box3(
+        new THREE.Vector3(tile.localBounds.min.x, tile.localBounds.min.y, minZ),
+        new THREE.Vector3(tile.localBounds.max.x, tile.localBounds.max.y, maxZ),
+      );
+    } else {
+      if (draped && !this.warnedMissingPickMesh) {
+        this.warnedMissingPickMesh = true;
+        console.warn(`[PDF] "${this.sheet.label}" cannot drape because the target surface has no mesh.`);
+      }
+      tile.bounds = tile.localBounds.clone();
+    }
+
     const texture = new THREE.DataTexture(pixels, width, height, THREE.RGBAFormat, THREE.UnsignedByteType);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.flipY = true;
@@ -1203,7 +1310,6 @@ export class RenderPdf {
     this.group.add(mesh);
     tile.mesh = mesh;
     tile.texture = texture;
-    tile.bounds = tile.localBounds.clone();
   }
 
   private disposeTile(tile: PdfTileState): void {

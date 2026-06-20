@@ -3,6 +3,7 @@ import {
   setPdfVisible,
   removePdfSheet,
   openPdfGroupScene,
+  setPdfDrapeTarget,
 } from '../importController';
 import { RowShell } from './RowShell';
 import { PdfPageRow } from './PdfPageRow';
@@ -15,12 +16,14 @@ export function PdfSheetRow({
   onToggle,
   pages,
   sectionColor,
+  surfaces,
 }: {
   entry: PdfSheetEntry;
   isExpanded?: boolean;
   onToggle?: () => void;
   pages?: PdfSheetEntry[];
   sectionColor?: string;
+  surfaces: { handle: string; name: string }[];
 }) {
   const importNotes = useAppStore((s) => s.importNotes);
   const setNotesHandle = useAppStore((s) => s.setNotesHandle);
@@ -130,6 +133,22 @@ export function PdfSheetRow({
               </div>
             )}
           </div>
+          {surfaces.length > 0 && (
+            <div className={styles.elemRow}>
+              <span className={styles.elemRowLabel}>Drape onto</span>
+              <select
+                className={styles.selectCtl}
+                value={entry.drapeTargetSurfaceId ?? ''}
+                disabled={!entry.placement}
+                onChange={(ev) => setPdfDrapeTarget(entry.handle, ev.target.value || null)}
+              >
+                <option value="">- no target -</option>
+                {surfaces.map((s) => (
+                  <option key={s.handle} value={s.handle}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           {displayPages.map((page, idx) => (
             <PdfPageRow
               key={page.handle}

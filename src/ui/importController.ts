@@ -676,7 +676,7 @@ export function confirmPdfImport(): void {
       opacityPct: 100,
       whiteThreshold: 240,
       draped: false,
-      drapeTargetSurfaceId: state.activeHandle,
+      drapeTargetSurfaceId: null,
       widthPx150: page.widthPx150,
       heightPx150: page.heightPx150,
       flatOffsetPx: { x: 0, y: 0 },
@@ -1027,6 +1027,9 @@ export function removeSurface(handle: string): void {
     for (const g of useAppStore.getState().geotiffs) {
       if (g.drapeTarget === handle) setGeotiffTarget(g.handle, null);
     }
+    for (const p of useAppStore.getState().pdfSheets) {
+      if (p.drapeTargetSurfaceId === handle) setPdfDrapeTarget(p.handle, null);
+    }
     for (const group of useAppStore.getState().geotiffGroups) {
       if (group.drapeTarget === handle) {
         useAppStore.getState().patchGeotiffGroup(group.id, { drapeTarget: null });
@@ -1366,6 +1369,16 @@ export function setPdfPlacement(handle: string, placement: PdfPlacement): void {
   store.getState().patchPdfSheet(handle, { placement });
   const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
   if (sheet) engineHolder.current?.updatePdfSheet(sheet);
+}
+
+export function setPdfDrapeTarget(handle: string, targetHandle: string | null): void {
+  const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
+  if (!sheet || !sheet.placement) return;
+  store.getState().patchPdfSheet(handle, {
+    drapeTargetSurfaceId: targetHandle,
+    draped: targetHandle !== null,
+  });
+  engineHolder.current?.setPdfDrapeTarget(handle, targetHandle);
 }
 
 export function setPdfBorderCrop(

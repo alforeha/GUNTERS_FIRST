@@ -514,6 +514,13 @@ export class ViewerEngine {
     this.requestRender();
   }
 
+  setPdfDrapeTarget(handle: string, surfaceHandle: string | null): void {
+    const target = surfaceHandle ? this.surfaces.get(surfaceHandle) ?? null : null;
+    this.pdfs.get(handle)?.setTarget(target);
+    this.updateSceneMetrics();
+    this.requestRender();
+  }
+
   addPdf(sheet: PdfRenderableSheet, file: File): string {
     if (this.disposed) throw new Error('ViewerEngine: addPdf after dispose');
     // PDF must NOT anchor sceneOrigin — only positioned datasets do.
@@ -1502,7 +1509,7 @@ export class ViewerEngine {
     }
     let pdfChanged = false;
     for (const pdf of this.pdfs.values()) {
-      if (pdf.updateVisible(this.activeCamera)) pdfChanged = true;
+      if (pdf.updateVisible(this.activeCamera, this.exaggeration)) pdfChanged = true;
     }
     if (pdfChanged) {
       this.updateSceneMetrics();
