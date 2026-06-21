@@ -679,7 +679,7 @@ export function confirmPdfImport(): void {
       drapeTargetSurfaceId: null,
       widthPx150: page.widthPx150,
       heightPx150: page.heightPx150,
-      flatOffsetPx: { x: 0, y: 0 },
+      relativeLayoutPx: { x: 0, y: 0 },
     };
   });
   let group: PdfGroupEntry | null = null;
@@ -1150,7 +1150,7 @@ function applyPdfGroupDefaultLayout(sheets: PdfSheetEntry[], group: PdfGroupEntr
   if (members.length === 0) return;
   const sameSource = members.every((sheet) => sheet.fileId === members[0]!.fileId);
   if (!sameSource) {
-    for (const sheet of members) sheet.flatOffsetPx = { x: 0, y: 0 };
+    for (const sheet of members) { sheet.relativeLayoutPx = { x: 0, y: 0 }; }
     return;
   }
   let centerY = 0;
@@ -1158,7 +1158,7 @@ function applyPdfGroupDefaultLayout(sheets: PdfSheetEntry[], group: PdfGroupEntr
   for (let i = 0; i < members.length; i++) {
     const sheet = members[i]!;
     if (i > 0) centerY -= previousHeight / 2 + sheet.heightPx150 / 2;
-    sheet.flatOffsetPx = { x: 0, y: centerY };
+    sheet.relativeLayoutPx = { x: 0, y: centerY };
     previousHeight = sheet.heightPx150;
   }
 }
@@ -1186,7 +1186,7 @@ export function createPdfGroup(label: string, handles: string[]): void {
   applyPdfGroupDefaultLayout(nextMembers, group);
   state.addPdfGroup(group);
   for (const sheet of nextMembers) {
-    state.patchPdfSheet(sheet.handle, { groupId: group.id, flatOffsetPx: sheet.flatOffsetPx });
+    state.patchPdfSheet(sheet.handle, { groupId: group.id, relativeLayoutPx: sheet.relativeLayoutPx });
     engineHolder.current?.updatePdfSheet(sheet);
   }
 }
@@ -1200,7 +1200,7 @@ export function removeSheetFromGroup(handle: string): void {
   const nextSheetIds = group.sheetIds.filter((id) => id !== handle);
 
   if (nextSheetIds.length === 0) {
-    store.getState().patchPdfSheet(handle, { groupId: null, flatOffsetPx: { x: 0, y: 0 } });
+    store.getState().patchPdfSheet(handle, { groupId: null, relativeLayoutPx: { x: 0, y: 0 } });
     store.getState().removePdfGroup(group.id);
     const updated = store.getState().pdfSheets.find((s) => s.handle === handle);
     if (updated) engineHolder.current?.updatePdfSheet(updated);
@@ -1213,10 +1213,10 @@ export function removeSheetFromGroup(handle: string): void {
   const updatedGroup: PdfGroupEntry = { ...group, sheetIds: nextSheetIds };
   applyPdfGroupDefaultLayout(clones, updatedGroup);
 
-  store.getState().patchPdfSheet(handle, { groupId: null, flatOffsetPx: { x: 0, y: 0 } });
+  store.getState().patchPdfSheet(handle, { groupId: null, relativeLayoutPx: { x: 0, y: 0 } });
   store.getState().reorderPdfGroupSheets(group.id, nextSheetIds);
   for (const clone of clones) {
-    store.getState().patchPdfSheet(clone.handle, { flatOffsetPx: clone.flatOffsetPx });
+    store.getState().patchPdfSheet(clone.handle, { relativeLayoutPx: clone.relativeLayoutPx });
   }
   for (const clone of clones) {
     const fresh = store.getState().pdfSheets.find((s) => s.handle === clone.handle);
@@ -1264,7 +1264,7 @@ export function addSheetsToGroup(groupId: string, handles: string[]): void {
 
   store.getState().reorderPdfGroupSheets(group.id, nextSheetIds);
   for (const clone of clones) {
-    store.getState().patchPdfSheet(clone.handle, { flatOffsetPx: clone.flatOffsetPx });
+    store.getState().patchPdfSheet(clone.handle, { relativeLayoutPx: clone.relativeLayoutPx });
   }
   for (const clone of clones) {
     const fresh = store.getState().pdfSheets.find((s) => s.handle === clone.handle);
@@ -1359,8 +1359,8 @@ export function setEdge(handle: string, patch: { visible?: boolean; color?: stri
   if (updated) engineHolder.current?.updatePdfSheet(updated);
 }
 
-export function setPdfFlatOffset(handle: string, flatOffsetPx: { x: number; y: number }): void {
-  store.getState().patchPdfSheet(handle, { flatOffsetPx });
+export function setPdfFlatOffset(handle: string, layout: { x: number; y: number }): void {
+  store.getState().patchPdfSheet(handle, { relativeLayoutPx: layout });
   const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
   if (sheet) engineHolder.current?.updatePdfSheet(sheet);
 }
@@ -1373,7 +1373,7 @@ export function setPdfPlacement(handle: string, placement: PdfPlacement): void {
 
 export function setPdfDrapeTarget(handle: string, targetHandle: string | null): void {
   const sheet = store.getState().pdfSheets.find((item) => item.handle === handle);
-  if (!sheet || !sheet.placement) return;
+  if (!sheet) return;
   store.getState().patchPdfSheet(handle, {
     drapeTargetSurfaceId: targetHandle,
     draped: targetHandle !== null,

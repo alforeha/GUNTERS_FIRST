@@ -163,8 +163,8 @@ export interface PdfPlacementPointPair {
 
 export interface PdfPlacement {
   pairs: PdfPlacementPointPair[];
-  translation: { x: number; y: number; z: number };
-  rotationDeg: number;
+  anchorTranslation: { x: number; y: number; z: number };
+  anchorRotationDeg: number;
   scale: number;
   residualFt: number | null;
 }

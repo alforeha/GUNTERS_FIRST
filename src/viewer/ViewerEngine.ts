@@ -523,8 +523,6 @@ export class ViewerEngine {
 
   addPdf(sheet: PdfRenderableSheet, file: File): string {
     if (this.disposed) throw new Error('ViewerEngine: addPdf after dispose');
-    // PDF must NOT anchor sceneOrigin — only positioned datasets do.
-    // If positioned data already exists, default the PDF to the data center.
     const origin = this.sceneOrigin ?? [0, 0, 0] as Vec3;
     const pdf = new RenderPdf(
       sheet.handle,
@@ -538,7 +536,7 @@ export class ViewerEngine {
     this.pdfFootprints.set(sheet.handle, JSON.stringify({
       calibration: sheet.calibration,
       orientation: sheet.orientation,
-      flatOffsetPx: sheet.flatOffsetPx,
+      relativeLayoutPx: sheet.relativeLayoutPx,
       widthPx150: sheet.widthPx150,
       heightPx150: sheet.heightPx150,
       borderCrop: sheet.borderCrop,
@@ -586,7 +584,7 @@ export class ViewerEngine {
     const footprintKey = JSON.stringify({
       calibration: sheet.calibration,
       orientation: sheet.orientation,
-      flatOffsetPx: sheet.flatOffsetPx,
+      relativeLayoutPx: sheet.relativeLayoutPx,
       widthPx150: sheet.widthPx150,
       heightPx150: sheet.heightPx150,
       borderCrop: sheet.borderCrop,

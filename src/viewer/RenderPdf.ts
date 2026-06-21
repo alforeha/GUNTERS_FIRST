@@ -40,7 +40,7 @@ export interface PdfRenderableSheet {
   whiteThreshold: number;
   widthPx150: number;
   heightPx150: number;
-  flatOffsetPx: { x: number; y: number };
+  relativeLayoutPx: { x: number; y: number };
   borderCrop: BorderCrop | null;
   northArrow: PdfNorthArrow | null;
   scaleBar: PdfScaleBar | null;
@@ -141,33 +141,22 @@ export class RenderPdf {
   }
 
   private computePdfOverlap(): boolean {
-    if (!this.target || !this.sheet.placement) return false;
-    const surfacePositions = this.target.model.positions;
-    let sMinX = Infinity;
-    let sMinY = Infinity;
-    let sMaxX = -Infinity;
-    let sMaxY = -Infinity;
-    for (let i = 0; i < surfacePositions.length; i += 3) {
-      const x = surfacePositions[i]!;
-      const y = surfacePositions[i + 1]!;
-      if (x < sMinX) sMinX = x;
-      if (x > sMaxX) sMaxX = x;
-      if (y < sMinY) sMinY = y;
-      if (y > sMaxY) sMaxY = y;
-    }
+    if (!this.target) return false;
+    const surfaceBounds = this.target.bounds;
+    const sMinX = surfaceBounds.min.x;
+    const sMinY = surfaceBounds.min.y;
+    const sMaxX = surfaceBounds.max.x;
+    const sMaxY = surfaceBounds.max.y;
     const wSize = this.sheetWorldSize();
     const hw = wSize.width / 2;
     const hh = wSize.height / 2;
-    const rad = THREE.MathUtils.degToRad(this.sheet.placement.rotationDeg);
-    const cosR = Math.cos(rad);
-    const sinR = Math.sin(rad);
-    const tx = this.sheet.placement.translation.x;
-    const ty = this.sheet.placement.translation.y;
-    const localCorners: [number, number][] = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
-    const worldCorners = localCorners.map(([cx, cy]) => ({
-      x: tx + cosR * cx - sinR * cy,
-      y: ty + sinR * cx + cosR * cy,
-    }));
+    const localCorners = [
+      new THREE.Vector3(-hw, -hh, 0),
+      new THREE.Vector3( hw, -hh, 0),
+      new THREE.Vector3( hw,  hh, 0),
+      new THREE.Vector3(-hw,  hh, 0),
+    ];
+    const worldCorners = localCorners.map((c) => c.applyMatrix4(this.group.matrix));
     const pMinX = Math.min(...worldCorners.map((c) => c.x));
     const pMaxX = Math.max(...worldCorners.map((c) => c.x));
     const pMinY = Math.min(...worldCorners.map((c) => c.y));
@@ -357,8 +346,8 @@ export class RenderPdf {
       const ppf = this.pixelsPerFoot();
       const pivotWx = pivotScenePx.x / ppf;
       const pivotWy = pivotScenePx.y / ppf;
-      const baseWx = baseCenterScenePx !== undefined ? baseCenterScenePx.x / ppf : this.sheet.flatOffsetPx.x / ppf;
-      const baseWy = baseCenterScenePx !== undefined ? baseCenterScenePx.y / ppf : this.sheet.flatOffsetPx.y / ppf;
+      const baseWx = baseCenterScenePx !== undefined ? baseCenterScenePx.x / ppf : this.sheet.relativeLayoutPx.x / ppf;
+      const baseWy = baseCenterScenePx !== undefined ? baseCenterScenePx.y / ppf : this.sheet.relativeLayoutPx.y / ppf;
       const deltaRad = THREE.MathUtils.degToRad(baselineOrientDeg) - rad;
       const dx = pivotWx - baseWx;
       const dy = pivotWy - baseWy;
@@ -385,19 +374,32 @@ export class RenderPdf {
   private applyTransform(): void {
     const placement = this.sheet.placement;
     if (placement) {
+      const ppf = this.pixelsPerFoot();
+      const rad = THREE.MathUtils.degToRad(placement.anchorRotationDeg);
+      const cz = Math.cos(rad);
+      const sz = Math.sin(rad);
+      const rx = this.sheet.relativeLayoutPx.x / ppf;
+      const ry = this.sheet.relativeLayoutPx.y / ppf;
+      const at = placement.anchorTranslation;
       this.group.position.set(
-        placement.translation.x - this.origin[0],
-        placement.translation.y - this.origin[1],
-        placement.translation.z - this.origin[2],
+        at.x + rx * cz - ry * sz - this.origin[0],
+        at.y + rx * sz + ry * cz - this.origin[1],
+        at.z - this.origin[2],
       );
-      this.group.rotation.set(0, 0, -THREE.MathUtils.degToRad(placement.rotationDeg));
+      const sheetRotRad = THREE.MathUtils.degToRad(this.sheet.orientation ?? 0);
+      this.group.rotation.set(0, 0, rad + sheetRotRad);
       this.group.scale.setScalar(1);
       this.group.visible = this.visibleAll;
       return;
     }
     const rotation = THREE.MathUtils.degToRad(this.sheet.orientation ?? 0);
-    this.group.position.set(0, 0, -this.origin[2]);
-    this.group.rotation.set(0, 0, -rotation);
+    const ppf = this.pixelsPerFoot();
+    this.group.position.set(
+      this.sheet.relativeLayoutPx.x / ppf,
+      this.sheet.relativeLayoutPx.y / ppf,
+      0,
+    );
+    this.group.rotation.set(0, 0, rotation);
     this.group.scale.setScalar(1);
     this.group.visible = this.visibleAll;
   }

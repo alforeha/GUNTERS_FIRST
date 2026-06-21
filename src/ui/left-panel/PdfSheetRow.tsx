@@ -16,17 +16,16 @@ export function PdfSheetRow({
   onToggle,
   pages,
   sectionColor,
-  surfaces,
 }: {
   entry: PdfSheetEntry;
   isExpanded?: boolean;
   onToggle?: () => void;
   pages?: PdfSheetEntry[];
   sectionColor?: string;
-  surfaces: { handle: string; name: string }[];
 }) {
   const importNotes = useAppStore((s) => s.importNotes);
   const setNotesHandle = useAppStore((s) => s.setNotesHandle);
+  const surfacesStore = useAppStore((s) => s.surfaces);
   const setPlacingPdfHandle = useAppStore((s) => s.setPlacingPdfHandle);
   const setCameraMode = useAppStore((s) => s.setCameraMode);
   const cameraMode = useAppStore((s) => s.cameraMode);
@@ -133,17 +132,16 @@ export function PdfSheetRow({
               </div>
             )}
           </div>
-          {surfaces.length > 0 && (
+          {surfacesStore.length > 0 && (
             <div className={styles.elemRow}>
               <span className={styles.elemRowLabel}>Drape onto</span>
               <select
                 className={styles.selectCtl}
                 value={entry.drapeTargetSurfaceId ?? ''}
-                disabled={!entry.placement}
                 onChange={(ev) => setPdfDrapeTarget(entry.handle, ev.target.value || null)}
               >
                 <option value="">- no target -</option>
-                {surfaces.map((s) => (
+                {surfacesStore.map((s) => (
                   <option key={s.handle} value={s.handle}>{s.name}</option>
                 ))}
               </select>

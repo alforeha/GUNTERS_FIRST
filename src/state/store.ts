@@ -221,7 +221,7 @@ export interface PdfSheetEntry {
   drapeTargetSurfaceId: string | null;
   widthPx150: number;
   heightPx150: number;
-  flatOffsetPx: { x: number; y: number };
+  relativeLayoutPx: { x: number; y: number };
 }
 
 export interface PdfGroupEntry {

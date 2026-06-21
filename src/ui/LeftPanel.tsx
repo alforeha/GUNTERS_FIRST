@@ -243,7 +243,6 @@ export function LeftPanel({ sizeClass }: { sizeClass: string }) {
                         isExpanded={expandedHandle === docHandle}
                         onToggle={() => toggleExpand(docHandle)}
                         sectionColor={PDF_TYPE_COLOR}
-                        surfaces={surfaces.map((s) => ({ handle: s.handle, name: s.name }))}
                       />
                     </div>
                   );

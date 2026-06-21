@@ -10,7 +10,7 @@ interface Point3 { x: number; y: number; z: number; }
 interface Point2 { x: number; y: number; }
 
 function worldToSheetPx(world: Point3, wcx: number, wcy: number, ppf: number, sheetW: number, sheetH: number, orientationDeg: number): Point2 {
-  const a = (orientationDeg * Math.PI) / 180;
+  const a = -(orientationDeg * Math.PI) / 180;
   const dx = world.x - wcx;
   const dy = world.y - wcy;
   const rx = dx * Math.cos(a) - dy * Math.sin(a);
@@ -39,20 +39,37 @@ export function PlacementToolbar({ container }: { container: HTMLElement | null 
   const onConfirm = () => {
     const engine = engineHolder.current;
     if (!engine || !sheet || !pickedPdfWorldRef.current || !targetWorldRef.current) return;
-    const ppf = sheet.calibration?.pixelsPerUnit ?? 100;
-    const pos = engine.getPdfGroupPositionScenePx(sheet.handle);
-    const wcx = pos ? pos.x / ppf : sheet.flatOffsetPx.x / ppf;
-    const wcy = pos ? pos.y / ppf : sheet.flatOffsetPx.y / ppf;
     const pw = pickedPdfWorldRef.current;
     const tw = targetWorldRef.current;
+    const deltaX = tw.x - pw.x;
+    const deltaY = tw.y - pw.y;
     const origin = engine.getSceneOrigin();
-    setPdfPlacement(sheet.handle, {
-      pairs: [{ pdf: pickedPdfSheetPxRef.current ?? { x: 0, y: 0 }, world: { x: tw.x, y: tw.y, z: tw.z } }],
-      translation: { x: origin[0] + wcx + (tw.x - pw.x), y: origin[1] + wcy + (tw.y - pw.y), z: 0 },
-      rotationDeg: sheet.orientation ?? 0,
-      scale: 1.0,
-      residualFt: null,
-    });
+
+    const state = useAppStore.getState();
+    const members = sheet.groupId
+      ? state.pdfSheets.filter((s) => s.groupId === sheet.groupId)
+      : [sheet];
+
+    const ppfPicked = sheet.calibration?.pixelsPerUnit ?? 100;
+    const posPicked = engine.getPdfGroupPositionScenePx(sheet.handle);
+    const wcxPicked = posPicked ? posPicked.x / ppfPicked : sheet.relativeLayoutPx.x / ppfPicked;
+    const wcyPicked = posPicked ? posPicked.y / ppfPicked : sheet.relativeLayoutPx.y / ppfPicked;
+    const calcAnchor = {
+      x: origin[0] + wcxPicked + deltaX - sheet.relativeLayoutPx.x / ppfPicked,
+      y: origin[1] + wcyPicked + deltaY - sheet.relativeLayoutPx.y / ppfPicked,
+      z: 0,
+    };
+    for (const member of members) {
+      setPdfPlacement(member.handle, {
+        pairs: member.handle === sheet.handle
+          ? [{ pdf: pickedPdfSheetPxRef.current ?? { x: 0, y: 0 }, world: { x: tw.x, y: tw.y, z: tw.z } }]
+          : [],
+        anchorTranslation: calcAnchor,
+        anchorRotationDeg: 0,
+        scale: 1.0,
+        residualFt: null,
+      });
+    }
     exit();
   };
 
@@ -74,8 +91,8 @@ export function PlacementToolbar({ container }: { container: HTMLElement | null 
       if (phase === 'pick-pdf') {
         const ppf = sheet.calibration?.pixelsPerUnit ?? 100;
         const pos = engine.getPdfGroupPositionScenePx(sheet.handle);
-        const wcx = pos ? pos.x / ppf : sheet.flatOffsetPx.x / ppf;
-        const wcy = pos ? pos.y / ppf : sheet.flatOffsetPx.y / ppf;
+        const wcx = pos ? pos.x / ppf : sheet.relativeLayoutPx.x / ppf;
+        const wcy = pos ? pos.y / ppf : sheet.relativeLayoutPx.y / ppf;
         const sheetPx = worldToSheetPx({ x: pt.x, y: pt.y, z: pt.z }, wcx, wcy, ppf, sheet.widthPx150, sheet.heightPx150, sheet.orientation ?? 0);
         pickedPdfWorldRef.current = { x: pt.x, y: pt.y, z: pt.z };
         pickedPdfSheetPxRef.current = sheetPx;
